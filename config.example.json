@@ -1,0 +1,21 @@
+{
+  "port": 5678,
+  "levtech": {
+    "topUrl": "https://platform.levtech.jp/p/",
+    "listUrl": "https://platform.levtech.jp/p/work-report/"
+  },
+  "typeform": {
+    "formUrl": "https://crmleverages.typeform.com/to/u67kvMSy",
+    "personalId": "ENGxxxxxxxxxx"
+  },
+  "calendar": {
+    "webAppUrl": "https://script.google.com/macros/s/XXXXXXXX/exec",
+    "sharedSecret": "GAS のスクリプトプロパティ SHARED_SECRET と同じ値"
+  },
+  "workHours": {
+    "start": "09:00",
+    "end": "18:00",
+    "rest": "01:00"
+  },
+  "chromePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+}
