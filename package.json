@@ -1,0 +1,21 @@
+{
+  "name": "kintai-hub-poc",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "login": "node 01-login.mjs",
+    "check": "node 02-check-session.mjs",
+    "fill": "node 03-fill.mjs",
+    "vacation": "node 04-vacation-fill.mjs",
+    "calendar": "node 05-calendar-sync.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

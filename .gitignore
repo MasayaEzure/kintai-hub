@@ -1,0 +1,7 @@
+node_modules/
+profile/
+screenshots/
+calendar.config.json
+output/
+deploy-history.log
+.DS_Store
