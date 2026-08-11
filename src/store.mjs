@@ -6,8 +6,6 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DATA_DIR } from './config.mjs';
 
-const STORE_PATH = path.join(DATA_DIR, 'store.json');
-const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const BACKUP_KEEP = 30;
 
 export const KINDS = ['vacation', 'late', 'early', 'custom'];
@@ -42,11 +40,14 @@ export class ValidationError extends Error {
 }
 
 export class Store {
-  constructor() {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    if (fs.existsSync(STORE_PATH)) {
-      this.data = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
+  // dataDir はテストから一時ディレクトリを注入できるようにする(既定は従来どおり data/)
+  constructor(dataDir = DATA_DIR) {
+    this.storePath = path.join(dataDir, 'store.json');
+    this.backupDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(this.backupDir, { recursive: true });
+    if (fs.existsSync(this.storePath)) {
+      this.data = JSON.parse(fs.readFileSync(this.storePath, 'utf8'));
     } else {
       this.data = { exceptions: [], levtechRuns: {} };
       this.#persist();
@@ -54,17 +55,17 @@ export class Store {
   }
 
   #persist() {
-    if (fs.existsSync(STORE_PATH)) {
+    if (fs.existsSync(this.storePath)) {
       const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
-      fs.copyFileSync(STORE_PATH, path.join(BACKUP_DIR, `store-${stamp}-${randomUUID().slice(0, 4)}.json`));
-      const backups = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith('store-')).sort();
+      fs.copyFileSync(this.storePath, path.join(this.backupDir, `store-${stamp}-${randomUUID().slice(0, 4)}.json`));
+      const backups = fs.readdirSync(this.backupDir).filter((f) => f.startsWith('store-')).sort();
       for (const old of backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP))) {
-        fs.unlinkSync(path.join(BACKUP_DIR, old));
+        fs.unlinkSync(path.join(this.backupDir, old));
       }
     }
-    const tmp = STORE_PATH + '.tmp';
+    const tmp = this.storePath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2) + '\n');
-    fs.renameSync(tmp, STORE_PATH);
+    fs.renameSync(tmp, this.storePath);
   }
 
   list() {
