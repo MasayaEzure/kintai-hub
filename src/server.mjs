@@ -143,13 +143,16 @@ app.post('/api/exceptions/:id/retry-calendar', wrap(async (req, res) => {
   res.json({ result, record: store.get(rec.id) });
 }));
 
-// Typeform のみ再実行: failed からは通常導線(§3-3)
+// Typeform のみ再実行: failed / none からは通常導線(§3-3)
 app.post('/api/exceptions/:id/retry-typeform', wrap(async (req, res) => {
   const rec = store.get(req.params.id);
-  const target = rec.cancellation && rec.cancellation.typeform !== 'none' && !rec.cancelled ? 'cancellation' : 'request';
+  if (rec.cancelled) throw new ValidationError('取り消し済みレコードは送信できません');
+  const target = rec.cancellation && rec.cancellation.typeform !== 'none' ? 'cancellation' : 'request';
   const status = target === 'cancellation' ? rec.cancellation.typeform : rec.statuses.typeform;
-  if (status !== 'failed') {
-    throw new ValidationError(`再実行できるのは failed のみです(現在: ${status})。unknown は到達確認の導線から操作してください`);
+  // none も許可(P1-2): 質問文言変更などクリック前の失敗では submitting へ遷移する前に終わり、
+  // 未送信のまま none で残る。none は未送信確定なので二重送信リスクはない
+  if (!['none', 'failed'].includes(status)) {
+    throw new ValidationError(`送信できるのは未送信(none)または失敗(failed)のみです(現在: ${status})。unknown は到達確認の導線から操作してください`);
   }
   const job = startTypeformRetry(runner, store, config, rec, { target });
   res.json({ job });
