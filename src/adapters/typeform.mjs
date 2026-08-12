@@ -43,7 +43,7 @@ export function buildAnswers(record, { cancellation = false } = {}) {
 // 全問回答 → onBeforeSubmit() → 送信 → 完了検出。
 // 戻り値: { outcome: 'submitted' | 'unknown', detectedBy, bodyHead }
 // 送信クリック前の失敗は throw(呼び出し側で failed 扱い)。クリック後は throw しない。
-export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, screenshotPrefix = 'typeform' }) {
+export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, screenshotPrefix = 'typeform', launchOptions = {} }) {
   const rules = [
     { re: /種別/, kind: 'choice', value: answers.type },
     { re: /理由/, kind: 'choice', value: answers.reason },
@@ -56,7 +56,7 @@ export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, scr
   const formUrl = `${config.typeform.formUrl}#id=${config.typeform.personalId}`;
 
   // ログイン不要のため素の起動(persistent context 不使用 = プロファイルロックと無縁)
-  const browser = await chromium.launch({ headless: false, channel: 'chrome' });
+  const browser = await chromium.launch({ headless: false, channel: 'chrome', ...launchOptions });
   try {
     const page = await browser.newPage();
     await page.goto(formUrl, { waitUntil: 'domcontentloaded' });
@@ -97,8 +97,16 @@ export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, scr
         await ctx.screenshot(page, `${screenshotPrefix}-before-submit`);
         // ---- write-ahead: ここで submitting を永続化してから送信する ----
         await onBeforeSubmit();
-        await submitBtn.dispatchEvent('click');
         // ---- ここから先は throw しない(結果は submitted / unknown のみ)----
+        // クリック命令自体の例外は「クリック前」と「クリック後」の境界そのもので、
+        // ブラウザ内でクリック(=送信)が成立した後に接続が切れた可能性を否定できない。
+        // failed(未送信確定・通常再送可)にすると二重申請の経路になるため unknown を返す(§3-3)
+        try {
+          await submitBtn.dispatchEvent('click');
+        } catch (err) {
+          ctx.log(`送信クリック命令が例外で終了しました(送信済みの可能性あり): ${err.message}`);
+          return { outcome: 'unknown', detectedBy: null, bodyHead: `クリック命令が例外で終了(送信済みの可能性あり): ${err.message}`.slice(0, 200) };
+        }
         let detectedBy = '';
         const deadline = Date.now() + 20000;
         while (!detectedBy && Date.now() < deadline) {

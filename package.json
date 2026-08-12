@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.mjs",
+    "test": "node --test",
     "login": "node 01-login.mjs",
     "check": "node 02-check-session.mjs",
     "fill": "node 03-fill.mjs",

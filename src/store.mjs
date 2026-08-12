@@ -6,8 +6,6 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DATA_DIR } from './config.mjs';
 
-const STORE_PATH = path.join(DATA_DIR, 'store.json');
-const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const BACKUP_KEEP = 30;
 
 export const KINDS = ['vacation', 'late', 'early', 'custom'];
@@ -42,29 +40,50 @@ export class ValidationError extends Error {
 }
 
 export class Store {
-  constructor() {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    if (fs.existsSync(STORE_PATH)) {
-      this.data = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
+  // dataDir はテストから一時ディレクトリを注入できるようにする(既定は従来どおり data/)
+  constructor(dataDir = DATA_DIR) {
+    this.storePath = path.join(dataDir, 'store.json');
+    this.backupDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(this.backupDir, { recursive: true });
+    if (fs.existsSync(this.storePath)) {
+      this.data = JSON.parse(fs.readFileSync(this.storePath, 'utf8'));
+      this.#recoverStuckSubmitting();
     } else {
       this.data = { exceptions: [], levtechRuns: {} };
       this.#persist();
     }
   }
 
-  #persist() {
-    if (fs.existsSync(STORE_PATH)) {
-      const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
-      fs.copyFileSync(STORE_PATH, path.join(BACKUP_DIR, `store-${stamp}-${randomUUID().slice(0, 4)}.json`));
-      const backups = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith('store-')).sort();
-      for (const old of backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP))) {
-        fs.unlinkSync(path.join(BACKUP_DIR, old));
+  // クラッシュ復旧(P1-1): submitting のままプロセスが終了したレコードは、遷移を起こす主体
+  // (実行中ジョブ)が消えているため出口がない。送信結果を確定できない状態なので unknown へ
+  // 回復し、到達確認つきの resolve-unknown 導線に合流させる(§3-3「確定できない場合は unknown」)
+  #recoverStuckSubmitting() {
+    let changed = false;
+    for (const rec of this.data.exceptions) {
+      for (const holder of [rec.statuses, rec.cancellation]) {
+        if (holder?.typeform === 'submitting') {
+          holder.typeform = 'unknown';
+          rec.updatedAt = new Date().toISOString();
+          changed = true;
+        }
       }
     }
-    const tmp = STORE_PATH + '.tmp';
+    if (changed) this.#persist();
+  }
+
+  #persist() {
+    if (fs.existsSync(this.storePath)) {
+      const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
+      fs.copyFileSync(this.storePath, path.join(this.backupDir, `store-${stamp}-${randomUUID().slice(0, 4)}.json`));
+      const backups = fs.readdirSync(this.backupDir).filter((f) => f.startsWith('store-')).sort();
+      for (const old of backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP))) {
+        fs.unlinkSync(path.join(this.backupDir, old));
+      }
+    }
+    const tmp = this.storePath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2) + '\n');
-    fs.renameSync(tmp, STORE_PATH);
+    fs.renameSync(tmp, this.storePath);
   }
 
   list() {
@@ -226,12 +245,16 @@ export class Store {
     return rec;
   }
 
-  // どこにも反映されていないレコードは取り消し申請なしで直接取り消せる
+  // 申請が成立していない(none / failed)レコードは取り消し申請なしで直接取り消せる(P1-3)。
+  // カレンダーのみ登録済みでも可(カレンダーは可逆)。その場合は手動削除チェックリストに合流させる
   cancelDirect(id) {
     const rec = this.get(id);
     if (rec.cancelled) throw new ValidationError('すでに取り消し済みです');
-    if (!this.isEditable(rec)) {
-      throw new ValidationError('申請済み・登録済みのレコードは取り消し申請が必要です');
+    if (!['none', 'failed'].includes(rec.statuses.typeform)) {
+      throw new ValidationError('送信済み・送信中・送達不明のレコードは取り消し申請が必要です');
+    }
+    if (rec.statuses.calendar === 'registered' && !rec.cancellation) {
+      rec.cancellation = { typeform: 'none', detail: null, snapshot: null, calendarCleanupDone: false };
     }
     rec.cancelled = true;
     rec.updatedAt = new Date().toISOString();
