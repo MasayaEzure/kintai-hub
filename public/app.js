@@ -53,6 +53,7 @@ const toast = (msg, isError = false) => {
 let state = null;
 let editingCustomId = null;
 let jobTimer = null;
+let lastJobRender = null; // 直近に全描画したジョブの { id, state }。確認待ち中の再描画抑制に使う
 const watchedJobs = new Set(); // 完了ジョブを再監視して無限ループしないためのガード
 
 // ---- 状態の取得と全体描画 --------------------------------------------------
@@ -152,9 +153,17 @@ function renderJob(job) {
   const panel = $('job-panel');
   if (!job) {
     panel.classList.add('hidden');
+    lastJobRender = null;
     return;
   }
   panel.classList.remove('hidden');
+  const log = job.log.slice(-8).map((l) => `<div>${esc(l.msg)}</div>`).join('');
+  // 確認待ち中の再描画はログのみ更新する。全再構築すると上書き承認チェック・スクロール位置が
+  // ポーリングのたびに失われ、承認したつもりの行が未承認のまま保存される(§F1 手順5)。
+  if (job.state === 'awaiting_confirmation' && lastJobRender?.id === job.id && lastJobRender.state === job.state && $('job-log')) {
+    $('job-log').innerHTML = log || '...';
+    return;
+  }
   const stateLabel = {
     running: badge(['実行中', 'bg-blue-100 text-blue-800']),
     awaiting_confirmation: badge(['確認待ち', 'bg-amber-100 text-amber-800']),
@@ -163,7 +172,6 @@ function renderJob(job) {
     cancelled: badge(['中止', 'bg-slate-100 text-slate-600']),
   }[job.state];
   const typeLabel = { 'levtech-fill': '月末勤怠入力', request: '例外日の申請・登録', 'typeform-retry': 'Typeform 再送信', 'session-check': 'セッションチェック' }[job.type] ?? job.type;
-  const log = job.log.slice(-8).map((l) => `<div>${esc(l.msg)}</div>`).join('');
 
   let extra = '';
   if (job.state === 'awaiting_confirmation' && job.preview?.kind === 'levtech-plan') {
@@ -187,9 +195,10 @@ function renderJob(job) {
       <h2 class="font-semibold">ジョブ: ${esc(typeLabel)} <span class="text-xs text-slate-400">${esc(job.id)}</span></h2>
       ${stateLabel}
     </div>
-    <div class="mt-2 max-h-32 overflow-y-auto rounded bg-slate-50 p-2 font-mono text-xs text-slate-600">${log || '...'}</div>
+    <div id="job-log" class="mt-2 max-h-32 overflow-y-auto rounded bg-slate-50 p-2 font-mono text-xs text-slate-600">${log || '...'}</div>
     ${extra}`;
   bindPreviewHandlers(job);
+  lastJobRender = { id: job.id, state: job.state };
 }
 
 function renderLevtechPreview(job) {
@@ -245,6 +254,7 @@ function bindPreviewHandlers(job) {
         await api(`/api/jobs/${job.id}/confirm`, { method: 'POST', body: { approve: true, data: { approvedDates } } });
       } catch (err) {
         toast(err.message, true);
+        approve.disabled = false; // 確認待ち中は再描画しないため、失敗時はここで復帰させる
       }
     };
   }
@@ -355,7 +365,7 @@ function renderRecord(rec) {
         </label>
         <div class="mt-1.5 flex gap-2">
           <button data-act="unknown-confirm" data-id="${rec.id}" class="rounded border border-purple-300 px-2 py-1 hover:bg-purple-100">届いていた → 申請済みにする</button>
-          <button data-act="unknown-resubmit" data-id="${rec.id}" class="rounded border border-purple-300 px-2 py-1 hover:bg-purple-100">届いていない → 再送信</button>
+          <button data-act="unknown-resubmit" data-id="${rec.id}" class="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100">届いていない → 再送信</button>
         </div>
       </div>`;
   }
@@ -432,12 +442,25 @@ async function handleRecordAction(btn) {
         toast('到達状況を目視確認した旨のチェックが必要です', true);
         return;
       }
-      const action = act === 'unknown-confirm' ? 'confirm-submitted' : 'resubmit';
-      const res = await api(`/api/exceptions/${id}/resolve-unknown`, { method: 'POST', body: { action, verified: true } });
-      if (res.job) watchJob(res.job.id);
-      else {
-        toast('申請済みとして確定しました');
-        await refresh();
+      const resolveUnknown = async (action) => {
+        const res = await api(`/api/exceptions/${id}/resolve-unknown`, { method: 'POST', body: { action, verified: true } });
+        if (res.job) watchJob(res.job.id);
+        else {
+          toast('申請済みとして確定しました');
+          await refresh();
+        }
+      };
+      if (act === 'unknown-confirm') {
+        await resolveUnknown('confirm-submitted');
+      } else {
+        const target = rec.cancellation?.typeform === 'unknown' ? '取消申請' : '申請';
+        const time = rec.time ? ` ${rec.time}` : '';
+        openConfirm(`送達不明の${target}を再送信`, `
+          <p class="text-xs text-rose-700">初回の送信が実際には届いていた場合、この操作で<strong>同じ${target}が二重に送信</strong>されます。送信後は取り下げできません。</p>
+          <dl class="mt-2 grid grid-cols-3 gap-1 text-sm">
+            <dt class="text-slate-500">対象</dt><dd class="col-span-2">${fmtDate(rec)} ${KIND_LABELS[rec.kind]}${esc(time)}</dd>
+            ${rec.reason ? `<dt class="text-slate-500">理由</dt><dd class="col-span-2">${esc(rec.reason)}${rec.reasonDetail ? `(${esc(rec.reasonDetail)})` : ''}</dd>` : ''}
+          </dl>`, () => resolveUnknown('resubmit'));
       }
     } else if (act === 'cleanup-done') {
       await api(`/api/exceptions/${id}/cleanup-done`, { method: 'POST', body: { done: true } });
