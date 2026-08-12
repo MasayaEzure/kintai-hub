@@ -50,19 +50,31 @@ export class LoginFlow {
     try {
       const job = this.runner.start('session-check', {}, async (ctx) => {
         ctx.log('Chrome の終了を検知。セッションを再チェックします');
-        return await withLevtech(async (page) => {
-          try {
-            await assertSession(page, this.config);
-            ctx.log('セッション OK: 再ログインなしで到達できました');
-            return { session: 'ok' };
-          } catch (err) {
-            if (err instanceof SessionExpiredError) {
-              ctx.log('セッション NG: まだログイン画面に戻されます');
-              return { session: 'expired' };
+        let result;
+        try {
+          result = await withLevtech(async (page) => {
+            try {
+              await assertSession(page, this.config);
+              ctx.log('セッション OK: 再ログインなしで到達できました');
+              return { session: 'ok' };
+            } catch (err) {
+              if (err instanceof SessionExpiredError) {
+                ctx.log('セッション NG: まだログイン画面に戻されます');
+                return { session: 'expired' };
+              }
+              throw err;
             }
-            throw err;
-          }
-        });
+          });
+        } catch (err) {
+          this.state = { phase: 'idle', message: `セッションチェックに失敗しました: ${err.message}`, checkJobId: null };
+          throw err;
+        }
+        // チェック完了後は checkJobId を残さない(P1-6): 完了済みチェックジョブの再監視が
+        // 実行中ジョブの表示を乗っ取るのを防ぐ。回復済みなら残留メッセージも消す
+        this.state = result.session === 'ok'
+          ? { phase: 'idle', message: null, checkJobId: null }
+          : { phase: 'idle', message: 'まだログインできていません。もう一度ログインをやり直してください', checkJobId: null };
+        return result;
       });
       this.state = { phase: 'idle', message: 'セッションを再チェック中です', checkJobId: job.id };
     } catch (err) {
