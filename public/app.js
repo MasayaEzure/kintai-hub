@@ -33,6 +33,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error(data.error ?? `API エラー (${res.status})`);
     err.code = data.code;
+    err.status = res.status;
     throw err;
   }
   return data;
@@ -126,23 +127,37 @@ function watchJob(jobId, { once = false } = {}) {
   if (once && watchedJobs.has(jobId)) return;
   watchedJobs.add(jobId);
   clearInterval(jobTimer);
+  let pollFailures = 0;
   const poll = async () => {
     let job;
     try {
       job = await api(`/api/jobs/${jobId}`);
-    } catch {
-      clearInterval(jobTimer);
+      pollFailures = 0;
+    } catch (err) {
+      // 一時的な通信断では止めない(P1-5)。404(ジョブ消失)と連続失敗のみ明示的に停止する
+      pollFailures++;
+      if (err.status === 404) {
+        clearInterval(jobTimer);
+        toast('ジョブが見つかりません。サーバーが再起動した可能性があります。ページを再読み込みしてください', true);
+      } else if (pollFailures >= 5) {
+        clearInterval(jobTimer);
+        toast('ジョブの進捗を取得できません。ページを再読み込みしてください', true);
+      }
       return;
     }
     renderJob(job);
     if (!['running', 'awaiting_confirmation'].includes(job.state)) {
       clearInterval(jobTimer);
-      const st = await api('/api/state');
-      state = st;
-      renderRecords();
-      renderLastRun();
-      renderPlan();
-      renderLogin(st.login);
+      try {
+        const st = await api('/api/state');
+        state = st;
+        renderRecords();
+        renderLastRun();
+        renderPlan();
+        renderLogin(st.login);
+      } catch (err) {
+        toast(`最新状態の取得に失敗しました: ${err.message}`, true);
+      }
     }
   };
   jobTimer = setInterval(poll, 1200);
@@ -301,14 +316,24 @@ function renderLogin(login) {
   } else {
     card.classList.add('hidden');
   }
-  if (login.checkJobId) watchJob(login.checkJobId, { once: true });
+  // 実行中ジョブの監視をセッションチェックの監視で乗っ取らない(P1-6)。
+  // グローバルのポーリングタイマーは1本のため、別ジョブが動いている間は checkJobId を見ない
+  if (login.checkJobId) {
+    const busyWithOther =
+      state?.job && state.job.id !== login.checkJobId && ['running', 'awaiting_confirmation'].includes(state.job.state);
+    if (!busyWithOther) watchJob(login.checkJobId, { once: true });
+  }
 }
 
 // ---- 例外日一覧 ----
+// 取消済みでもカレンダーの手動削除が未完了なら残作業として表示する(P1-4)
+const needsCalendarCleanup = (r) =>
+  r.cancelled && r.cancellation && r.statuses.calendar === 'registered' && !r.cancellation.calendarCleanupDone;
+
 function renderRecords() {
   const showCancelled = $('list-show-cancelled').checked;
   const records = [...state.exceptions]
-    .filter((r) => showCancelled || !r.cancelled)
+    .filter((r) => showCancelled || !r.cancelled || needsCalendarCleanup(r))
     .sort((a, b) => b.date.localeCompare(a.date));
   const box = $('record-list');
   if (records.length === 0) {
@@ -335,11 +360,15 @@ function renderRecord(rec) {
   const time = rec.time ? ` ${rec.time}` : rec.kind === 'custom' ? ` ${rec.start}-${rec.end}/${rec.rest}` : '';
   const actions = [];
   const editable = !rec.cancelled && rec.statuses.typeform === 'none' && rec.statuses.calendar === 'none';
+  // 直接取消は「申請が成立していない(none / failed)」レコードなら可(P1-3。カレンダー登録済みでも可逆なので可)
+  const canDirectCancel = !rec.cancelled && !rec.cancellation && ['none', 'failed'].includes(rec.statuses.typeform);
   if (editable && rec.kind === 'custom') actions.push(['edit-custom', '編集', 'border-slate-300']);
-  if (editable) actions.push(['cancel-direct', '取消', 'border-slate-300']);
+  if (canDirectCancel) actions.push(['cancel-direct', '取消', 'border-slate-300']);
   if (!rec.cancelled) {
     const tfTarget = rec.cancellation && rec.cancellation.typeform !== 'none' ? rec.cancellation.typeform : rec.statuses.typeform;
     if (tfTarget === 'failed') actions.push(['retry-typeform', '申請を再送信', 'border-rose-300 text-rose-700']);
+    // none のまま残った要申請レコード(クリック前失敗など)は未送信確定なので通常導線で送信できる(P1-2)
+    else if (tfTarget === 'none' && rec.kind !== 'custom') actions.push(['retry-typeform', '申請を送信', 'border-amber-300 text-amber-800']);
     if (rec.statuses.calendar === 'failed') actions.push(['retry-calendar', 'カレンダー再実行', 'border-rose-300 text-rose-700']);
     if (rec.statuses.typeform === 'submitted' && (!rec.cancellation || rec.cancellation.typeform === 'none')) {
       actions.push(['cancel-request', '取り消し申請', 'border-slate-300']);
@@ -372,7 +401,7 @@ function renderRecord(rec) {
 
   // 取消済みでカレンダー登録が残っている場合のチェックリスト
   let cleanupUi = '';
-  if (rec.cancelled && rec.cancellation && rec.statuses.calendar === 'registered' && !rec.cancellation.calendarCleanupDone) {
+  if (needsCalendarCleanup(rec)) {
     cleanupUi = `
       <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
         <label class="flex items-center gap-1.5">
@@ -403,7 +432,13 @@ async function handleRecordAction(btn) {
   const rec = state.exceptions.find((r) => r.id === id);
   try {
     if (act === 'cancel-direct') {
-      openConfirm('レコードの取消', `<p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind]}」を取り消します。どこにも反映されていないため申請は不要です。</p>`, async () => {
+      const tfNote = rec.statuses.typeform === 'failed'
+        ? '<p class="mt-1 text-xs text-slate-500">申請は送信されていない(失敗)ため、取り消し申請は不要です。</p>'
+        : '<p class="mt-1 text-xs text-slate-500">申請前のレコードのため、取り消し申請は不要です。</p>';
+      const calNote = rec.statuses.calendar === 'registered'
+        ? '<p class="mt-2 text-xs text-amber-700">カレンダーには登録済みです。取消後に予定の手動削除が必要です(チェックリストが出ます)。</p>'
+        : '';
+      openConfirm('レコードの取消', `<p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind]}」を取り消します。</p>${tfNote}${calNote}`, async () => {
         await api(`/api/exceptions/${id}/cancel-direct`, { method: 'POST' });
         await refresh();
       });
@@ -417,7 +452,9 @@ async function handleRecordAction(btn) {
       $('custom-cancel-edit').classList.remove('hidden');
       $('custom-date').closest('details').open = true;
     } else if (act === 'retry-typeform') {
-      openConfirm('申請の再送信', `<p>${fmtDate(rec)} の申請を Typeform へ再送信します。送信後は取り下げできません。</p>`, async () => {
+      const isResend = rec.statuses.typeform === 'failed' || rec.cancellation?.typeform === 'failed';
+      const verb = isResend ? '再送信' : '送信';
+      openConfirm(`申請の${verb}`, `<p>${fmtDate(rec)} の申請を Typeform へ${verb}します。送信後は取り下げできません。</p>`, async () => {
         const { job } = await api(`/api/exceptions/${id}/retry-typeform`, { method: 'POST' });
         watchJob(job.id);
       });
