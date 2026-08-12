@@ -57,6 +57,19 @@ let jobTimer = null;
 let lastJobRender = null; // 直近に全描画したジョブの { id, state }。確認待ち中の再描画抑制に使う
 const watchedJobs = new Set(); // 完了ジョブを再監視して無限ループしないためのガード
 
+// ジョブ実行中(running / awaiting_confirmation)は新規投入系の操作を無効化する(P2-1、§6)。
+// サーバー側の 409 に頼らず、UI でも構造的に押せなくする
+let jobBusy = false;
+function setBusy(busy) {
+  jobBusy = busy;
+  $('f1-run').disabled = busy;
+  $('f2-submit').disabled = busy;
+  applyBusyToRecordActions();
+}
+function applyBusyToRecordActions() {
+  document.querySelectorAll('#record-list [data-act]').forEach((el) => (el.disabled = jobBusy));
+}
+
 // ---- 状態の取得と全体描画 --------------------------------------------------
 async function refresh() {
   state = await api('/api/state');
@@ -166,6 +179,7 @@ function watchJob(jobId, { once = false } = {}) {
 
 function renderJob(job) {
   const panel = $('job-panel');
+  setBusy(!!job && ['running', 'awaiting_confirmation'].includes(job.state));
   if (!job) {
     panel.classList.add('hidden');
     lastJobRender = null;
@@ -342,6 +356,7 @@ function renderRecords() {
   }
   box.innerHTML = records.map(renderRecord).join('');
   box.querySelectorAll('[data-act]').forEach((btn) => (btn.onclick = () => handleRecordAction(btn)));
+  applyBusyToRecordActions();
 }
 
 function renderRecord(rec) {
@@ -365,8 +380,10 @@ function renderRecord(rec) {
   if (editable && rec.kind === 'custom') actions.push(['edit-custom', '編集', 'border-slate-300']);
   if (canDirectCancel) actions.push(['cancel-direct', '取消', 'border-slate-300']);
   if (!rec.cancelled) {
-    const tfTarget = rec.cancellation && rec.cancellation.typeform !== 'none' ? rec.cancellation.typeform : rec.statuses.typeform;
-    if (tfTarget === 'failed') actions.push(['retry-typeform', '申請を再送信', 'border-rose-300 text-rose-700']);
+    // 取り消し申請の再送は本申請の再送と別物なので、ボタン文言でも区別する(P2-7)
+    const isCancelTarget = !!rec.cancellation && rec.cancellation.typeform !== 'none';
+    const tfTarget = isCancelTarget ? rec.cancellation.typeform : rec.statuses.typeform;
+    if (tfTarget === 'failed') actions.push(['retry-typeform', isCancelTarget ? '取り消し申請を再送信' : '申請を再送信', 'border-rose-300 text-rose-700']);
     // none のまま残った要申請レコード(クリック前失敗など)は未送信確定なので通常導線で送信できる(P1-2)
     else if (tfTarget === 'none' && rec.kind !== 'custom') actions.push(['retry-typeform', '申請を送信', 'border-amber-300 text-amber-800']);
     if (rec.statuses.calendar === 'failed') actions.push(['retry-calendar', 'カレンダー再実行', 'border-rose-300 text-rose-700']);
@@ -376,7 +393,7 @@ function renderRecord(rec) {
   }
 
   const actionsHtml = actions
-    .map(([act, label, cls]) => `<button data-act="${act}" data-id="${rec.id}" class="rounded-lg border ${cls} px-2.5 py-1 text-xs hover:bg-slate-50">${label}</button>`)
+    .map(([act, label, cls]) => `<button data-act="${act}" data-id="${rec.id}" class="rounded-lg border ${cls} px-2.5 py-1 text-xs hover:bg-slate-50 disabled:opacity-50">${label}</button>`)
     .join('');
 
   // unknown 解決導線(§3-3: 到達確認チェック付きの別導線)
@@ -393,8 +410,8 @@ function renderRecord(rec) {
           メール通知等で到達状況を目視確認しました
         </label>
         <div class="mt-1.5 flex gap-2">
-          <button data-act="unknown-confirm" data-id="${rec.id}" class="rounded border border-purple-300 px-2 py-1 hover:bg-purple-100">届いていた → 申請済みにする</button>
-          <button data-act="unknown-resubmit" data-id="${rec.id}" class="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100">届いていない → 再送信</button>
+          <button data-act="unknown-confirm" data-id="${rec.id}" class="rounded border border-purple-300 px-2 py-1 hover:bg-purple-100 disabled:opacity-50">届いていた → 申請済みにする</button>
+          <button data-act="unknown-resubmit" data-id="${rec.id}" class="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100 disabled:opacity-50">届いていない → 再送信</button>
         </div>
       </div>`;
   }
@@ -452,9 +469,12 @@ async function handleRecordAction(btn) {
       $('custom-cancel-edit').classList.remove('hidden');
       $('custom-date').closest('details').open = true;
     } else if (act === 'retry-typeform') {
-      const isResend = rec.statuses.typeform === 'failed' || rec.cancellation?.typeform === 'failed';
+      // 取り消し申請の再送はダイアログでも本申請と区別する(P2-7)
+      const isCancellation = !!rec.cancellation && rec.cancellation.typeform !== 'none';
+      const label = isCancellation ? '取り消し申請' : '申請';
+      const isResend = (isCancellation ? rec.cancellation.typeform : rec.statuses.typeform) === 'failed';
       const verb = isResend ? '再送信' : '送信';
-      openConfirm(`申請の${verb}`, `<p>${fmtDate(rec)} の申請を Typeform へ${verb}します。送信後は取り下げできません。</p>`, async () => {
+      openConfirm(`${label}の${verb}`, `<p>${fmtDate(rec)} の${label}を Typeform へ${verb}します。送信後は取り下げできません。</p>`, async () => {
         const { job } = await api(`/api/exceptions/${id}/retry-typeform`, { method: 'POST' });
         watchJob(job.id);
       });
@@ -500,8 +520,14 @@ async function handleRecordAction(btn) {
           </dl>`, () => resolveUnknown('resubmit'));
       }
     } else if (act === 'cleanup-done') {
-      await api(`/api/exceptions/${id}/cleanup-done`, { method: 'POST', body: { done: true } });
-      await refresh();
+      // 誤クリックの即確定を防ぐ(P2-8): チェックを一旦戻し、確認された場合のみ確定する
+      btn.checked = false;
+      openConfirm('カレンダー手動削除の確定', `
+        <p>${fmtDate(rec)} の予定をカレンダー「勤怠ハブ」から<strong>削除済み</strong>として確定します。</p>
+        <p class="mt-2 text-xs text-slate-500">確定するとこの残作業チェックリストは一覧から消えます。まだ削除していない場合は「やめる」を押してください。</p>`, async () => {
+        await api(`/api/exceptions/${id}/cleanup-done`, { method: 'POST', body: { done: true } });
+        await refresh();
+      });
     }
   } catch (err) {
     toast(err.message, true);
@@ -603,6 +629,10 @@ $('f2-submit').onclick = () => {
     contacted: $('f2-contacted').value === 'true',
   };
   if (!body.date) return toast('対象日を入力してください', true);
+  // 連続休暇チェック ON なのに終了日が空欄のまま送ると単日休暇として申請されてしまう(P2-5)
+  if (kind === 'vacation' && $('f2-range').checked && !body.endDate) {
+    return toast('連続休暇の終了日を入力してください', true);
+  }
   if (kind !== 'vacation' && !body.time) return toast('時刻を入力してください', true);
 
   const dateText = body.endDate ? `${body.date} 〜 ${body.endDate}` : body.date;
