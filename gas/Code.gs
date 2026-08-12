@@ -28,9 +28,9 @@ const WORK_END = '18:00';
 const MANUAL_SAMPLE = {
   dryRun: true,
   events: [
-    { date: '2026-08-14', kind: 'vacation' },
-    { date: '2026-08-20', kind: 'late', time: '11:00' },
-    { date: '2026-08-21', kind: 'early', time: '16:00' },
+    { id: 'sample-0001', date: '2026-08-14', kind: 'vacation' },
+    { id: 'sample-0002', date: '2026-08-20', kind: 'late', time: '11:00' },
+    { id: 'sample-0003', date: '2026-08-21', kind: 'early', time: '16:00' },
   ],
 };
 
@@ -84,7 +84,7 @@ function doPost(e) {
 
 // ---- 本体 ----
 
-// payload: { dryRun?: boolean, events: [{ date: 'YYYY-MM-DD', kind: 'vacation'|'late'|'early', time?: 'HH:MM' }] }
+// payload: { dryRun?: boolean, events: [{ id: 'レコードUUID', date: 'YYYY-MM-DD', kind: 'vacation'|'late'|'early', time?: 'HH:MM' }] }
 // dryRun はデフォルト true。明示的に false を渡したときだけ実登録する(安全側デフォルト)
 function sync(payload) {
   const dryRun = payload.dryRun !== false;
@@ -130,8 +130,13 @@ function sync(payload) {
 function buildPlan(ev) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ev.date || '');
   if (!m) return { error: 'date は YYYY-MM-DD 形式で指定: ' + ev.date };
+  // タグはレコード UUID(§3-1)。同一日に「取り消し→新規作成」した場合でも、
+  // 旧レコードの予定(手動削除待ち)と新レコードの予定を別物として区別できる
+  if (!ev.id) return { error: 'id(レコード UUID)が必要: ' + ev.date };
   const day = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const key = ev.kind + ':' + ev.date;
+  const key = ev.id;
+  // 旧形式タグ(kind:日付)で登録済みの既存予定も重複として検出するための後方互換キー
+  const legacyKey = ev.kind + ':' + ev.date;
   if (ev.kind === 'vacation') {
     // endDate 指定で複数日の連続休暇(1本の終日予定)になる
     if (ev.endDate) {
@@ -142,7 +147,8 @@ function buildPlan(ev) {
       // createAllDayEvent の終了日は exclusive のため +1 日する(しないと最終日が欠ける)
       const endExclusive = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate() + 1);
       return {
-        key: ev.kind + ':' + ev.date + '..' + ev.endDate,
+        key: key,
+        legacyKey: ev.kind + ':' + ev.date + '..' + ev.endDate,
         title: '休暇',
         allDay: true,
         day: day,
@@ -150,12 +156,13 @@ function buildPlan(ev) {
         timeLabel: '終日(' + ev.date + '〜' + ev.endDate + ')',
       };
     }
-    return { key: key, title: '休暇', allDay: true, day: day, timeLabel: '終日' };
+    return { key: key, legacyKey: legacyKey, title: '休暇', allDay: true, day: day, timeLabel: '終日' };
   }
   if (ev.kind === 'late') {
     if (!ev.time) return { error: 'late には time(出社時刻)が必要: ' + ev.date };
     return {
       key: key,
+      legacyKey: legacyKey,
       title: '遅参(' + ev.time + '出社)',
       allDay: false,
       day: day,
@@ -168,6 +175,7 @@ function buildPlan(ev) {
     if (!ev.time) return { error: 'early には time(退社時刻)が必要: ' + ev.date };
     return {
       key: key,
+      legacyKey: legacyKey,
       title: '早帰り(' + ev.time + '退社)',
       allDay: false,
       day: day,
@@ -186,7 +194,8 @@ function at(day, hhmm) {
 
 function findExisting(calendar, plan) {
   const hits = calendar.getEventsForDay(plan.day).filter(function (e) {
-    return e.getTag(TAG_KEY) === plan.key;
+    const tag = e.getTag(TAG_KEY);
+    return tag === plan.key || tag === plan.legacyKey;
   });
   return hits[0] || null;
 }

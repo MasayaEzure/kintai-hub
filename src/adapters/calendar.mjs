@@ -3,10 +3,11 @@
 import { audit } from '../audit.mjs';
 
 // records → GAS イベント配列(custom は申請・登録対象外)
+// id(レコード UUID)は GAS 側の重複検出タグに使う(§3-1)
 function toEvents(records) {
   return records
     .filter((r) => r.kind !== 'custom')
-    .map((r) => ({ date: r.date, kind: r.kind, time: r.time ?? undefined, endDate: r.endDate ?? undefined }));
+    .map((r) => ({ id: r.id, date: r.date, kind: r.kind, time: r.time ?? undefined, endDate: r.endDate ?? undefined }));
 }
 
 // 戻り値: GAS のレスポンス({ ok, dryRun, results: [{date, kind, status, ...}] })
@@ -21,7 +22,11 @@ export async function syncCalendar(config, records, { commit = false } = {}) {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload),
     redirect: 'follow',
+    signal: AbortSignal.timeout(30_000), // GAS 無応答でジョブが無限に待たないように(P2-4)
   });
+  if (!res.ok) {
+    throw new Error(`GAS が HTTP ${res.status} を返しました(デプロイ URL と公開設定を確認してください)`);
+  }
   const text = await res.text();
   let data;
   try {

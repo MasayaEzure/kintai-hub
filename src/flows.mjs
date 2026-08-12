@@ -9,6 +9,7 @@ import {
   assertMonthMatches,
   scrapeRows,
   classifyRows,
+  absentExpectedRows,
   applyRows,
   finalExpectedState,
   verifyAgainst,
@@ -55,6 +56,15 @@ export function startLevtechFill(runner, store, config, { month, workHours, manu
       const existing = await scrapeRows(page, inputUrl, plan.days);
       const rows = classifyRows(plan.days, existing);
       await ctx.screenshot(page, '01-scan');
+
+      // 期待値があるのに行が見つからない日は入力漏れになるため中断する(P2-2)
+      const missing = absentExpectedRows(rows);
+      if (missing.length > 0) {
+        throw new Error(
+          `入力が必要な日の行が見つかりませんでした: ${missing.map((r) => r.label).join(', ')}。` +
+            '画面構造の変化や対象月のズレの可能性があるため、何も入力せず中断します'
+        );
+      }
 
       const counts = {
         fill: rows.filter((r) => r.action === 'fill').length,
@@ -157,7 +167,12 @@ export function startRequestFlow(runner, store, config, record) {
     }
 
     const ok = tf === 'submitted' && cal.status === 'registered';
-    ctx.log(ok ? '申請・登録が完了しました' : '一部が未完了です。一覧のバッジから再実行できます');
+    // unknown は再実行導線がブロックされる(§3-3)ため「再実行できます」と誤誘導しない(P2-6)
+    ctx.log(
+      ok ? '申請・登録が完了しました'
+      : tf === 'unknown' ? '申請の送達を確認できませんでした。メール通知等で到達を確認し、一覧の「送達不明」の導線から操作してください'
+      : '一部が未完了です。一覧のバッジから再実行できます'
+    );
     return { recordId: record.id, calendar: cal.status, typeform: tf };
   });
 }

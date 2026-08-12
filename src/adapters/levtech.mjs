@@ -133,6 +133,14 @@ export function classifyRows(days, existing) {
   });
 }
 
+// 期待値があるのに行が見つからない日(P2-2)。無警告でスキップすると、入力漏れがあるのに
+// ジョブが成功として報告される。呼び出し側はこれが空でなければ中断する
+export function absentExpectedRows(rows) {
+  return rows.filter(
+    (r) => r.action === 'absent' && (r.expected.start || r.expected.end || r.expected.rest)
+  );
+}
+
 // 承認済みの計画をフォームへ反映する(fill + 承認された mismatch のみ)
 export async function applyRows(page, rows, approvedDates) {
   const applied = [];

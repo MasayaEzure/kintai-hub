@@ -137,6 +137,10 @@ app.post('/api/requests', wrap(async (req, res) => {
 
 // カレンダーのみ再実行(冪等・キュー外)
 app.post('/api/exceptions/:id/retry-calendar', wrap(async (req, res) => {
+  // キュー外だが、実行中ジョブ(request フロー等)のカレンダー登録・ストア更新と競合させない(P2-1)
+  if (runner.isBusy()) {
+    throw Object.assign(new Error('別のジョブが実行中です。完了後にやり直してください'), { status: 409 });
+  }
   const rec = store.get(req.params.id);
   if (rec.cancelled) throw new ValidationError('取り消し済みレコードはカレンダー登録できません');
   const result = await registerRecordToCalendar(config, store, rec, () => {});
