@@ -13,7 +13,8 @@ import { LoginFlow } from './login.mjs';
 import { buildMonthPlan, defaultTargetMonth } from './plan.mjs';
 import { audit } from './audit.mjs';
 import { registerRecordToCalendar } from './adapters/calendar.mjs';
-import { startLevtechFill, startRequestFlow, startTypeformRetry, startCancellationFlow } from './flows.mjs';
+import { startLevtechFill, startLevtechImport, startRequestFlow, startTypeformRetry, startCancellationFlow } from './flows.mjs';
+import { parseXls } from './excel.mjs';
 
 const config = loadConfig();
 const store = new Store();
@@ -197,6 +198,21 @@ app.post('/api/levtech/run', wrap(async (req, res) => {
   };
   const job = startLevtechFill(runner, store, config, { month, workHours: wh, manualUrl: manualUrl || null });
   res.json({ job });
+}));
+
+// Excel取込: 作業実績表(.xls)を raw ボディで受け取り、同期パース(失敗は 400)→
+// 取込ジョブを開始する。年月はファイル(D2/F2)から自動判定。manualUrl はクエリで受ける
+app.post('/api/levtech/import', express.raw({ type: () => true, limit: '20mb' }), wrap(async (req, res) => {
+  if (runner.isBusy()) {
+    throw Object.assign(new Error('別のジョブが実行中です。完了後にやり直してください'), { status: 409 });
+  }
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    throw Object.assign(new Error('ファイルの内容が空です。作業実績表(.xls)を指定してください'), { status: 400 });
+  }
+  const parsed = parseXls(req.body, config.workHours); // ExcelParseError は status=400 を持つ
+  const manualUrl = typeof req.query.manualUrl === 'string' && req.query.manualUrl.trim() ? req.query.manualUrl.trim() : null;
+  const job = startLevtechImport(runner, store, config, { parsed, buffer: req.body, manualUrl });
+  res.json({ job, month: parsed.month });
 }));
 
 // ---- ジョブ ----

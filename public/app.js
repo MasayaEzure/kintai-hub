@@ -22,6 +22,19 @@ const ACTION_BADGES = {
   mismatch: ['不一致', 'bg-rose-100 text-rose-800'],
   absent: ['行なし', 'bg-slate-100 text-slate-400'],
 };
+// Excel取込の分類ラベル(プレビュー表示専用。送信値は Excel の値を素通し)
+const EXCEL_KIND_BADGES = {
+  '通常': 'bg-slate-100 text-slate-600',
+  '休日': 'bg-slate-100 text-slate-400',
+  '終日休暇': 'bg-indigo-100 text-indigo-800',
+  '午前休暇': 'bg-indigo-100 text-indigo-800',
+  '午後休暇': 'bg-indigo-100 text-indigo-800',
+  '遅刻': 'bg-amber-100 text-amber-800',
+  '早退': 'bg-amber-100 text-amber-800',
+  '中抜け': 'bg-amber-100 text-amber-800',
+  '⚠空欄平日': 'bg-amber-100 text-amber-800',
+  '⚠要確認': 'bg-rose-100 text-rose-800',
+};
 
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
@@ -52,7 +65,6 @@ const toast = (msg, isError = false) => {
 };
 
 let state = null;
-let editingCustomId = null;
 let jobTimer = null;
 let lastJobRender = null; // 直近に全描画したジョブの { id, state }。確認待ち中の再描画抑制に使う
 const watchedJobs = new Set(); // 完了ジョブを再監視して無限ループしないためのガード
@@ -62,7 +74,8 @@ const watchedJobs = new Set(); // 完了ジョブを再監視して無限ルー�
 let jobBusy = false;
 function setBusy(busy) {
   jobBusy = busy;
-  $('f1-run').disabled = busy;
+  $('f1-drop').classList.toggle('pointer-events-none', busy);
+  $('f1-drop').classList.toggle('opacity-50', busy);
   $('f2-submit').disabled = busy;
   applyBusyToRecordActions();
 }
@@ -73,10 +86,6 @@ function applyBusyToRecordActions() {
 // ---- 状態の取得と全体描画 --------------------------------------------------
 async function refresh() {
   state = await api('/api/state');
-  if (!$('f1-month').value) $('f1-month').value = state.defaultMonth;
-  if (!$('f1-start').value) $('f1-start').value = state.workHours.start;
-  if (!$('f1-end').value) $('f1-end').value = state.workHours.end;
-  if (!$('f1-rest').value) $('f1-rest').value = state.workHours.rest;
 
   const problems = $('config-problems');
   if (state.problems?.length) {
@@ -88,51 +97,22 @@ async function refresh() {
 
   renderRecords();
   renderLastRun();
-  await renderPlan();
   if (state.job && ['running', 'awaiting_confirmation'].includes(state.job.state)) watchJob(state.job.id);
   else renderJob(state.job);
   renderLogin(state.login);
 }
 
-// ---- フロー①: 計画プレビュー ----
-async function renderPlan() {
-  const month = $('f1-month').value;
-  if (!month) return;
-  const q = new URLSearchParams({ month, start: $('f1-start').value, end: $('f1-end').value, rest: $('f1-rest').value });
-  let plan;
-  try {
-    plan = await api(`/api/plan?${q}`);
-  } catch (err) {
-    $('f1-plan').innerHTML = `<p class="text-sm text-rose-600">${esc(err.message)}</p>`;
+// ---- フロー①: 直近実行 ----
+// 対象月は Excel から自動判定されるため、月を問わず最新の実行を表示する
+function renderLastRun() {
+  const runs = Object.entries(state.levtechRuns ?? {});
+  if (runs.length === 0) {
+    $('f1-lastrun').textContent = '';
     return;
   }
-  const special = plan.days.filter((d) => d.kind);
-  const normal = plan.days.filter((d) => !d.kind).length;
-  const rows = special
-    .filter((d) => d.kind !== 'weekend')
-    .map((d) => {
-      const v = d.expected.start ? `${d.expected.start}-${d.expected.end} 休憩 ${d.expected.rest}` : '勤怠は空欄';
-      const warn = d.unsubmitted ? ` ${badge(['未申請', 'bg-amber-100 text-amber-800'])}` : '';
-      return `<tr class="border-b border-slate-100 last:border-0">
-        <td class="py-1 pr-3 whitespace-nowrap">${d.label}(${d.dowLabel})</td>
-        <td class="py-1 pr-3">${esc(d.note)}${warn}</td>
-        <td class="py-1 text-slate-500">${v}</td>
-      </tr>`;
-    })
-    .join('');
-  $('f1-plan').innerHTML = `
-    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-      <p class="text-slate-600">通常勤務 ${normal} 日(${esc(plan.workHours.start)}-${esc(plan.workHours.end)} 休憩 ${esc(plan.workHours.rest)})+ 下記の例外・祝日。土日は空欄のまま。</p>
-      ${rows ? `<table class="mt-2 w-full text-left">${rows}</table>` : '<p class="mt-1 text-slate-400">例外日・祝日はありません。</p>'}
-    </div>`;
-}
-
-function renderLastRun() {
-  const month = $('f1-month').value;
-  const run = state.levtechRuns?.[month];
-  $('f1-lastrun').textContent = run
-    ? `この月の直近実行: ${run.at.slice(0, 16).replace('T', ' ')}(${run.filledDays} 日 / ${run.totalHours})`
-    : '';
+  const [month, run] = runs.sort((a, b) => (b[1].at ?? '').localeCompare(a[1].at ?? ''))[0];
+  $('f1-lastrun').textContent =
+    `直近の入力: ${month}(${run.at.slice(0, 16).replace('T', ' ')} / ${run.filledDays} 日 / ${run.totalHours})`;
 }
 
 // ---- ジョブパネル ----
@@ -166,7 +146,6 @@ function watchJob(jobId, { once = false } = {}) {
         state = st;
         renderRecords();
         renderLastRun();
-        renderPlan();
         renderLogin(st.login);
       } catch (err) {
         toast(`最新状態の取得に失敗しました: ${err.message}`, true);
@@ -200,7 +179,7 @@ function renderJob(job) {
     failed: badge(['失敗', 'bg-rose-100 text-rose-800']),
     cancelled: badge(['中止', 'bg-slate-100 text-slate-600']),
   }[job.state];
-  const typeLabel = { 'levtech-fill': '月末勤怠入力', request: '例外日の申請・登録', 'typeform-retry': 'Typeform 再送信', 'session-check': 'セッションチェック' }[job.type] ?? job.type;
+  const typeLabel = { 'levtech-fill': '月末勤怠入力', 'levtech-import': '月末勤怠入力(Excel取込)', request: '例外日の申請・登録', 'typeform-retry': 'Typeform 再送信', 'session-check': 'セッションチェック' }[job.type] ?? job.type;
 
   let extra = '';
   if (job.state === 'awaiting_confirmation' && job.preview?.kind === 'levtech-plan') {
@@ -232,6 +211,7 @@ function renderJob(job) {
 
 function renderLevtechPreview(job) {
   const p = job.preview;
+  const isExcel = p.source === 'excel';
   const rows = p.rows
     .map((r) => {
       const cls = r.action === 'mismatch' ? 'bg-rose-50 text-rose-700' : r.action === 'fill' ? '' : 'text-slate-400';
@@ -241,24 +221,32 @@ function renderLevtechPreview(job) {
         ? `<input type="checkbox" class="approve-overwrite rounded border-rose-300" data-date="${r.date}" />`
         : '';
       const warn = r.unsubmitted ? ` ${badge(['未申請', 'bg-amber-100 text-amber-800'])}` : '';
+      // Excel取込: 分類ラベル列と、⚠付きの警告(空欄平日・整合チェック等)を表示する
+      const kindCell = isExcel
+        ? `<td class="py-0.5 pr-2 whitespace-nowrap">${r.excelKind ? badge([esc(r.excelKind), EXCEL_KIND_BADGES[r.excelKind] ?? 'bg-slate-100 text-slate-600']) : ''}</td>`
+        : '';
+      const warnings = (r.warnings ?? []).map((w) => `<div class="text-amber-700">⚠ ${esc(w)}</div>`).join('');
       return `<tr class="border-b border-slate-100 last:border-0 ${cls}">
         <td class="py-0.5 pr-2 whitespace-nowrap">${r.label}(${r.dowLabel})</td>
+        ${kindCell}
         <td class="py-0.5 pr-2">${badge(ACTION_BADGES[r.action])}</td>
         <td class="py-0.5 pr-2 whitespace-nowrap">${cur}</td>
         <td class="py-0.5 pr-2 whitespace-nowrap">${exp}</td>
-        <td class="py-0.5 pr-2">${esc(r.note)}${warn}</td>
+        <td class="py-0.5 pr-2">${esc(r.note)}${warn}${warnings}</td>
         <td class="py-0.5 text-center">${check}</td>
       </tr>`;
     })
     .join('');
+  const warningCount = p.rows.reduce((n, r) => n + (r.warnings?.length ?? 0), 0);
   return `
     <div class="mt-3 rounded-lg border border-slate-200 p-3">
-      <p class="text-sm font-medium">保存前プレビュー(${esc(p.month)}): 入力 ${p.counts.fill} 日 / 一致 ${p.counts.match} 日 / <span class="${p.counts.mismatch ? 'text-rose-600 font-semibold' : ''}">不一致 ${p.counts.mismatch} 日</span></p>
+      <p class="text-sm font-medium">保存前プレビュー(${esc(p.month)}${isExcel ? '・Excel取込' : ''}): 入力 ${p.counts.fill} 日 / 一致 ${p.counts.match} 日 / <span class="${p.counts.mismatch ? 'text-rose-600 font-semibold' : ''}">不一致 ${p.counts.mismatch} 日</span>${isExcel && warningCount ? ` / <span class="text-amber-700 font-semibold">⚠警告 ${warningCount} 件</span>` : ''}</p>
       ${p.counts.mismatch ? '<p class="mt-1 text-xs text-rose-600">不一致の行は現状維持が既定です。期待値で上書きする行のみ右端をチェックしてください。</p>' : ''}
+      ${isExcel && warningCount ? '<p class="mt-1 text-xs text-amber-700">⚠の行(空欄平日・要確認など)は Excel の内容をよく確認してから承認してください。空欄の行はスキップされます。</p>' : ''}
       <div class="mt-2 max-h-72 overflow-y-auto">
         <table class="w-full text-left text-xs">
           <thead class="sticky top-0 bg-white text-slate-400"><tr>
-            <th class="py-1 pr-2 font-normal">日付</th><th class="py-1 pr-2 font-normal">判定</th>
+            <th class="py-1 pr-2 font-normal">日付</th>${isExcel ? '<th class="py-1 pr-2 font-normal">分類</th>' : ''}<th class="py-1 pr-2 font-normal">判定</th>
             <th class="py-1 pr-2 font-normal">現在値</th><th class="py-1 pr-2 font-normal">期待値</th>
             <th class="py-1 pr-2 font-normal">備考</th><th class="py-1 font-normal">上書き承認</th>
           </tr></thead>
@@ -300,7 +288,7 @@ function bindPreviewHandlers(job) {
 
 function renderJobResult(job) {
   const r = job.result;
-  if (job.type === 'levtech-fill') {
+  if (job.type === 'levtech-fill' || job.type === 'levtech-import') {
     return r.saved
       ? `<div class="mt-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">保存成功: ${r.summary.days} 日 / 合計 ${r.summary.hours}(新規入力 ${r.applied} 行)。「更新しました。」を確認済み。</div>`
       : `<div class="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">${esc(r.message)}</div>`;
@@ -374,10 +362,8 @@ function renderRecord(rec) {
 
   const time = rec.time ? ` ${rec.time}` : rec.kind === 'custom' ? ` ${rec.start}-${rec.end}/${rec.rest}` : '';
   const actions = [];
-  const editable = !rec.cancelled && rec.statuses.typeform === 'none' && rec.statuses.calendar === 'none';
   // 直接取消は「申請が成立していない(none / failed)」レコードなら可(P1-3。カレンダー登録済みでも可逆なので可)
   const canDirectCancel = !rec.cancelled && !rec.cancellation && ['none', 'failed'].includes(rec.statuses.typeform);
-  if (editable && rec.kind === 'custom') actions.push(['edit-custom', '編集', 'border-slate-300']);
   if (canDirectCancel) actions.push(['cancel-direct', '取消', 'border-slate-300']);
   if (!rec.cancelled) {
     // 取り消し申請の再送は本申請の再送と別物なので、ボタン文言でも区別する(P2-7)
@@ -459,15 +445,6 @@ async function handleRecordAction(btn) {
         await api(`/api/exceptions/${id}/cancel-direct`, { method: 'POST' });
         await refresh();
       });
-    } else if (act === 'edit-custom') {
-      editingCustomId = id;
-      $('custom-date').value = rec.date;
-      $('custom-start').value = rec.start;
-      $('custom-end').value = rec.end;
-      $('custom-rest').value = rec.rest;
-      $('custom-add').textContent = '更新';
-      $('custom-cancel-edit').classList.remove('hidden');
-      $('custom-date').closest('details').open = true;
     } else if (act === 'retry-typeform') {
       // 取り消し申請の再送はダイアログでも本申請と区別する(P2-7)
       const isCancellation = !!rec.cancellation && rec.cancellation.typeform !== 'none';
@@ -555,55 +532,43 @@ $('confirm-yes').onclick = async () => {
   }
 };
 
-// ---- フロー① 操作 ----
-for (const id of ['f1-month', 'f1-start', 'f1-end', 'f1-rest']) {
-  $(id).addEventListener('change', () => {
-    renderPlan();
-    renderLastRun();
-  });
-}
-
-$('custom-add').onclick = async () => {
-  const body = {
-    kind: 'custom',
-    date: $('custom-date').value,
-    start: $('custom-start').value,
-    end: $('custom-end').value,
-    rest: $('custom-rest').value,
-  };
+// ---- フロー① 操作: Excel ドラッグ&ドロップ → 取込ジョブ開始 ----
+// アップロード=ジョブ開始。年月はファイル(D2/F2)から自動判定され、承認するまで何も書き込まない
+async function startImport(file) {
+  if (!file) return;
+  if (jobBusy) return toast('別のジョブが実行中です。完了後にやり直してください', true);
+  if (!/\.xls$/i.test(file.name)) return toast('.xls ファイル(作業実績表)を指定してください', true);
+  const manualUrl = $('f1-manual-url').value.trim();
+  const q = manualUrl ? `?manualUrl=${encodeURIComponent(manualUrl)}` : '';
   try {
-    if (editingCustomId) {
-      await api(`/api/exceptions/${editingCustomId}`, { method: 'PUT', body });
-      toast('更新しました');
-    } else {
-      await api('/api/exceptions', { method: 'POST', body });
-      toast('追加しました');
-    }
-    resetCustomForm();
-    await refresh();
+    const res = await fetch(`/api/levtech/import${q}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'x-kintai-token': TOKEN },
+      body: file,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? `API エラー (${res.status})`);
+    toast(`${data.month} の作業実績表を読み取りました。スキャンを開始します`);
+    watchJob(data.job.id);
   } catch (err) {
     toast(err.message, true);
   }
-};
-$('custom-cancel-edit').onclick = resetCustomForm;
-function resetCustomForm() {
-  editingCustomId = null;
-  for (const id of ['custom-date', 'custom-start', 'custom-end', 'custom-rest']) $(id).value = '';
-  $('custom-add').textContent = '追加';
-  $('custom-cancel-edit').classList.add('hidden');
 }
 
-$('f1-run').onclick = () => {
-  const month = $('f1-month').value;
-  const workHours = { start: $('f1-start').value, end: $('f1-end').value, rest: $('f1-rest').value };
-  const manualUrl = $('f1-manual-url').value.trim();
-  openConfirm('月末勤怠入力の開始', `
-    <p><strong>${month}</strong> の作業報告に入力します(基本 ${workHours.start}-${workHours.end} 休憩 ${workHours.rest})。</p>
-    <p class="mt-2 text-xs text-slate-500">この時点では何も書き込みません。スキャン後に保存前プレビューが表示され、承認した場合のみ入力・保存します。</p>
-    ${manualUrl ? `<p class="mt-1 text-xs text-slate-500">手動 URL: ${esc(manualUrl)}</p>` : ''}`, async () => {
-    const { job } = await api('/api/levtech/run', { method: 'POST', body: { month, workHours, manualUrl } });
-    watchJob(job.id);
-  });
+$('f1-drop').onclick = () => $('f1-file').click();
+$('f1-file').onchange = () => {
+  startImport($('f1-file').files[0]);
+  $('f1-file').value = ''; // 同じファイルの再選択でも change が発火するように
+};
+$('f1-drop').ondragover = (e) => {
+  e.preventDefault();
+  $('f1-drop').classList.add('border-indigo-400', 'bg-indigo-50/40');
+};
+$('f1-drop').ondragleave = () => $('f1-drop').classList.remove('border-indigo-400', 'bg-indigo-50/40');
+$('f1-drop').ondrop = (e) => {
+  e.preventDefault();
+  $('f1-drop').classList.remove('border-indigo-400', 'bg-indigo-50/40');
+  startImport(e.dataTransfer.files?.[0]);
 };
 
 // ---- フロー② 操作 ----
