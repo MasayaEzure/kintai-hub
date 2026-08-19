@@ -5,12 +5,14 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test",
-    "login": "node 01-login.mjs",
-    "check": "node 02-check-session.mjs",
-    "fill": "node 03-fill.mjs",
-    "vacation": "node 04-vacation-fill.mjs",
-    "calendar": "node 05-calendar-sync.mjs",
-    "parse-excel": "node 07-parse-excel.mjs"
+    "login": "node poc/01-login.mjs",
+    "check": "node poc/02-check-session.mjs",
+    "fill": "node poc/03-fill.mjs",
+    "vacation": "node poc/04-vacation-fill.mjs",
+    "calendar": "node poc/05-calendar-sync.mjs",
+    "parse-excel": "node poc/07-parse-excel.mjs",
+    "build-apps": "node poc/08-build-applications.mjs",
+    "typeform-dryrun": "node poc/09-typeform-dryrun.mjs"
   },
   "keywords": [],
   "author": "",

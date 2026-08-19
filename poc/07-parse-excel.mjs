@@ -6,8 +6,8 @@
 //       npm run parse-excel -- <path>  (任意の .xls を指定)
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseXls, fmtMinutes, ExcelParseError } from './src/excel.mjs';
-import { pad2 } from './src/plan.mjs';
+import { parseXls, fmtMinutes, ExcelParseError } from '../src/excel.mjs';
+import { pad2 } from '../src/plan.mjs';
 
 const filePath = process.argv[2] ?? path.join('data', 'samples', '作業実績表_202607.xls');
 if (!fs.existsSync(filePath)) {

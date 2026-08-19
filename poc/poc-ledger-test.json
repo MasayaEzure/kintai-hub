@@ -1,0 +1,6 @@
+[
+  { "type": "お休み", "date": "2026-08-10", "endDate": null, "time": null },
+  { "type": "遅参", "date": "2026-08-03", "endDate": null, "time": "11:00" },
+  { "type": "お休み", "date": "2026-08-04", "endDate": null, "time": null },
+  { "type": "遅参", "date": "2026-08-26", "endDate": null, "time": "10:00" }
+]

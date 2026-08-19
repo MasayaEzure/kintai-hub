@@ -31,7 +31,7 @@ src/
     calendar.mjs   … GAS Web App への HTTP POST(PoC 05 流用)
 public/            … UI(素の HTML/JS + Tailwind Play CDN)
 data/              … ストア・監査ログ・バックアップ(Git 管理外)
-0X-*.mjs           … PoC スクリプト(検証完了・参照用)
+poc/               … PoC スクリプト(検証完了・参照用。npm scripts からルートで実行する前提)
 mockup/            … UI モック(v0 / Next.js。見た目の参照元)
 gas/               … GAS Web App(デプロイ済みの本番資産)
 ```
