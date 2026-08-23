@@ -145,6 +145,7 @@ export class Store {
 
   transitionTypeform(id, next) {
     const rec = this.get(id);
+    if (rec.cancelled) throw new ValidationError('取消済みレコードのステータスは変更できません');
     const cur = rec.statuses.typeform;
     if (!(TF_TRANSITIONS[cur] ?? []).includes(next)) {
       throw new ValidationError(`Typeform ステータス遷移が不正です: ${cur} → ${next}`);
@@ -163,12 +164,29 @@ export class Store {
   }
 
   // 申請が成立していない(none / failed)レコードの取り消し(論理削除。P1-3)。
-  // 送信済みの取り消し連絡は Typeform を手動で開いて送り、その後この操作で台帳を整理する
+  // 送信済み(submitted)の台帳整理は cancelSubmitted(手動連絡済みの宣言つき)で行う
   cancelDirect(id) {
     const rec = this.get(id);
     if (rec.cancelled) throw new ValidationError('すでに取り消し済みです');
     if (!['none', 'failed'].includes(rec.statuses.typeform)) {
       throw new ValidationError('送信済み・送信中・送達不明のレコードは取り消せません(取り消しは Typeform から手動で連絡してください)');
+    }
+    rec.cancelled = true;
+    rec.updatedAt = new Date().toISOString();
+    this.#persist();
+    return rec;
+  }
+
+  // 送信済み(submitted)レコードの台帳整理(論理削除)。
+  // Typeform への取り消し連絡そのものは自動化できないため、手動で連絡を送った後に
+  // 台帳側を取消済みへ揃え、以後の照合(⚠食い違い)から外すための操作。
+  // 取消すと同じ日付が再び自動送信の対象に戻るため、API 層で連絡済みチェック(verified)を必須にする。
+  // submitting / unknown は送達が未確定のため対象外(unknown は resolve-unknown で確定させてから)
+  cancelSubmitted(id) {
+    const rec = this.get(id);
+    if (rec.cancelled) throw new ValidationError('すでに取り消し済みです');
+    if (rec.statuses.typeform !== 'submitted') {
+      throw new ValidationError(`台帳から取り消せるのは送信済み(submitted)のみです(現在: ${rec.statuses.typeform})`);
     }
     rec.cancelled = true;
     rec.updatedAt = new Date().toISOString();

@@ -8,6 +8,7 @@ import {
   buildSubmissionPlan,
   applyDecision,
   dateText,
+  recordsOverlappingMonth,
 } from '../src/applications.mjs';
 import { buildAnswers } from '../src/adapters/typeform.mjs';
 
@@ -155,6 +156,36 @@ test('toLedger: submitted/submitting/unknown は送信済み扱い、none/failed
   ]);
   assert.deepEqual(sent.map((e) => [e.type, e.status]), [['お休み', 'submitted'], ['遅参', 'submitting'], ['早帰り', 'unknown']]);
   assert.deepEqual(reusable.map((e) => e.status), ['none', 'failed']);
+});
+
+// ---- recordsOverlappingMonth: 台帳照合の月スコープ -----------------------------
+
+test('recordsOverlappingMonth: 過去月の送信済みは照合対象外になり orphan に出ない', () => {
+  const records = [
+    rec('vacation', '2026-07-10', 'submitted'),
+    rec('vacation', '2026-08-03', 'submitted'),
+  ];
+  const scoped = recordsOverlappingMonth(records, '2026-08');
+  assert.deepEqual(scoped.map((r) => r.date), ['2026-08-03']);
+  const plan = buildSubmissionPlan([day('2026-08-03', '終日休暇', { note: '終日休暇' })], scoped);
+  assert.equal(plan.orphans.length, 0);
+  assert.equal(plan.skipped.length, 1);
+});
+
+test('recordsOverlappingMonth: 同月内の orphan(Excel から消えた日)は引き続き検出される', () => {
+  const scoped = recordsOverlappingMonth([rec('vacation', '2026-08-24', 'submitted')], '2026-08');
+  const plan = buildSubmissionPlan([day('2026-08-03', '通常')], scoped);
+  assert.deepEqual(plan.orphans.map((e) => e.date), ['2026-08-24']);
+});
+
+test('recordsOverlappingMonth: 月をまたぐ期間レコードは重なりがあれば含める', () => {
+  const records = [
+    { ...rec('vacation', '2026-07-30', 'submitted'), endDate: '2026-08-01' },
+    { ...rec('vacation', '2026-06-29', 'submitted'), endDate: '2026-06-30' },
+  ];
+  assert.deepEqual(recordsOverlappingMonth(records, '2026-08').map((r) => r.date), ['2026-07-30']);
+  assert.deepEqual(recordsOverlappingMonth(records, '2026-07').map((r) => r.date), ['2026-07-30']);
+  assert.deepEqual(recordsOverlappingMonth(records, '2026-06').map((r) => r.date), ['2026-06-29']);
 });
 
 // ---- buildSubmissionPlan / applyDecision --------------------------------------

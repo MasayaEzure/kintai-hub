@@ -146,6 +146,14 @@ export function toLedger(records) {
 
 const overlapsRange = (a, b) => a.date <= (b.endDate ?? b.date) && b.date <= (a.endDate ?? a.date);
 
+// 台帳照合の対象を月にスコープする。month は 'YYYY-MM'、月をまたぐ期間は重なりがあれば含める。
+// 全期間を渡すと、過去月の送信済みが毎月 orphan(⚠食い違い)として警告に出続けてしまう
+export function recordsOverlappingMonth(records, month) {
+  const first = `${month}-01`;
+  const last = `${month}-31`; // 文字列比較の上限(実在日である必要はない)
+  return records.filter((r) => r.date <= last && first <= (r.endDate ?? r.date));
+}
+
 // Excel の days + store レコード → 送信計画(確認画面のプレビュー素材)
 export function buildSubmissionPlan(days, records) {
   const { apps, excluded } = buildApplications(days);

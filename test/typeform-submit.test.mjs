@@ -26,11 +26,17 @@ const MOCK_FORM_HTML = `<!doctype html>
   </script>
 </body></html>`;
 
-function startMockServer() {
+// 送信クリック後に完了画面が出ないフォーム(クリック後の切断・検出タイムアウトの再現用)
+const MOCK_FORM_NO_COMPLETE_HTML = MOCK_FORM_HTML.replace(
+  "document.body.innerHTML = '<p>ご回答ありがとうございました。</p>';",
+  ''
+);
+
+function startMockServer(html = MOCK_FORM_HTML) {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(MOCK_FORM_HTML);
+      res.end(html);
     });
     server.listen(0, '127.0.0.1', () => resolve(server));
   });
@@ -85,6 +91,27 @@ test('P0-3: 送信クリック命令が例外になった場合は throw せず 
       launchOptions: { headless: true },
     });
     // 送信済みか未送信か確定できないため、failed(未送信確定)ではなく unknown でなければならない
+    assert.equal(res.outcome, 'unknown');
+    assert.equal(res.detectedBy, null);
+  } finally {
+    server.close();
+  }
+});
+
+test('クリック成立後・完了検出前にブラウザが切断されても throw せず unknown を返す', { timeout: 60000 }, async () => {
+  const server = await startMockServer(MOCK_FORM_NO_COMPLETE_HTML);
+  try {
+    const { ctx, captured } = makeCtx();
+    const res = await submitTypeform(configFor(server), ANSWERS, {
+      ctx,
+      // クリックは成立させ、完了検出ループの最中にブラウザ接続を落とす。
+      // throw が漏れると呼び出し側で failed(通常再送可)になり、二重申請の経路になる
+      onBeforeSubmit: async () => {
+        setTimeout(() => captured.page.context().browser().close().catch(() => {}), 300);
+      },
+      launchOptions: { headless: true },
+      detectTimeoutMs: 3000,
+    });
     assert.equal(res.outcome, 'unknown');
     assert.equal(res.detectedBy, null);
   } finally {

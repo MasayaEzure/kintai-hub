@@ -5,7 +5,7 @@ import path from 'node:path';
 import { audit } from './audit.mjs';
 import { DATA_DIR } from './config.mjs';
 import { toPlanDays } from './excel.mjs';
-import { buildSubmissionPlan, applyDecision, TYPE_TO_KIND } from './applications.mjs';
+import { buildSubmissionPlan, applyDecision, TYPE_TO_KIND, recordsOverlappingMonth } from './applications.mjs';
 import {
   withLevtech,
   assertSession,
@@ -154,7 +154,7 @@ async function fillLevtechReport(ctx, store, config, { month, days, workHours, m
 // 1 件ずつ: 台帳レコード作成 → write-ahead(submitting)→ 送信 → submitted で続行。
 // 途中失敗(failed / unknown)は系統的失敗の可能性が高いためそこで中断する(設計決定9)。
 // 再実行時は送信済みが reconcile でスキップされ、残りだけが送られる
-async function submitApplications(ctx, store, config, sendList) {
+async function submitApplications(ctx, store, config, sendList, { levtechNote = '' } = {}) {
   const result = { planned: sendList.length, sent: 0 };
   if (sendList.length === 0) return result;
 
@@ -165,6 +165,7 @@ async function submitApplications(ctx, store, config, sendList) {
     // 同じ日に残った未送信レコード(none / failed)は論理削除して作り直す
     // (1 レコード = 1 回の送信試行系列。重複バリデーションとも整合する)
     for (const staleId of app.staleRecordIds) {
+      if (store.get(staleId).cancelled) continue; // 計画確定後に手動取消された場合は冪等にスキップ
       store.cancelDirect(staleId);
       audit('exception.auto-cancel-stale', { jobId: ctx.jobId, recordId: staleId, date: app.date });
     }
@@ -195,7 +196,8 @@ async function submitApplications(ctx, store, config, sendList) {
       if (store.get(rec.id).statuses.typeform === 'submitting') store.transitionTypeform(rec.id, 'failed');
       audit('typeform.result', { jobId: ctx.jobId, recordId: rec.id, outcome: 'failed', error: err.message });
       throw new Error(
-        `Typeform 送信に失敗したため中断しました(${label} / 送信完了 ${result.sent}/${result.planned} 件)。` +
+        levtechNote +
+          `Typeform 送信に失敗したため中断しました(${label} / 送信完了 ${result.sent}/${result.planned} 件)。` +
           `残りは未送信です。同じ Excel を再実行すると送信済みはスキップされます: ${err.message}`
       );
     }
@@ -208,7 +210,8 @@ async function submitApplications(ctx, store, config, sendList) {
     }
     // unknown: 到達を確定できないまま次を送ると二重送信のリスクがあるため中断する
     throw new Error(
-      `申請の送達を確認できなかったため中断しました(${label} / 送信完了 ${result.sent}/${result.planned} 件)。` +
+      levtechNote +
+        `申請の送達を確認できなかったため中断しました(${label} / 送信完了 ${result.sent}/${result.planned} 件)。` +
         '送信済み台帳の「送達不明」導線で到達を確認してから、同じ Excel を再実行してください'
     );
   }
@@ -223,8 +226,9 @@ async function submitApplications(ctx, store, config, sendList) {
 export function startLevtechImport(runner, store, config, { parsed, buffer, manualUrl }) {
   const { month } = parsed;
   const days = toPlanDays(parsed.days);
-  // 送信計画はジョブ開始前に組み立てる(ジョブは直列なので実行中に台帳は変わらない)
-  const applications = buildSubmissionPlan(parsed.days, store.list());
+  // 送信計画はジョブ開始前に組み立てる(ジョブは直列なので実行中に台帳は変わらない)。
+  // 台帳照合は対象月に重なるレコードのみ(過去月の送信済みが毎回 orphan ⚠になるのを防ぐ)
+  const applications = buildSubmissionPlan(parsed.days, recordsOverlappingMonth(store.list(), month));
 
   return runner.start('levtech-import', { month }, async (ctx) => {
     const uploadDir = path.join(DATA_DIR, 'uploads');
@@ -245,8 +249,12 @@ export function startLevtechImport(runner, store, config, { parsed, buffer, manu
       manualUrl,
       applications,
     });
-    // ここでレバテック用ブラウザは閉じている。以降が不可逆パート(Typeform 送信)
-    const typeform = await submitApplications(ctx, store, config, sendList);
+    // ここでレバテック用ブラウザは閉じている。以降が不可逆パート(Typeform 送信)。
+    // 送信途中で中断したとき「勤怠側はどこまで進んだか」をエラーメッセージで必ず伝える
+    const levtechNote = levtech.saved
+      ? 'レバテックへの勤怠入力・保存は完了しています(再実行しても入力済みの行は自動スキップされます)。'
+      : 'レバテック側は変更なし(何も保存していません)。';
+    const typeform = await submitApplications(ctx, store, config, sendList, { levtechNote });
     return { ...levtech, typeform };
   });
 }

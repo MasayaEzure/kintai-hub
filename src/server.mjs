@@ -72,11 +72,22 @@ app.get('/api/state', wrap(async (req, res) => {
 }));
 
 // ---- 送信済み台帳 ----
-// 未送信(none / failed)レコードの取り消し(論理削除)。
-// Typeform を手動で取り消し連絡した後の台帳整理にも使う
+// 未送信(none / failed)レコードの取り消し(論理削除)
 app.post('/api/exceptions/:id/cancel-direct', wrap(async (req, res) => {
   const rec = store.cancelDirect(req.params.id);
   audit('exception.cancel-direct', { recordId: rec.id });
+  res.json(rec);
+}));
+
+// 送信済み(submitted)の台帳整理: Typeform から手動で取り消しの連絡を送った後に、
+// 台帳側を取消済みへ揃える。取消すと同じ日付が再び自動送信の対象へ戻るため、
+// 手動連絡を済ませた旨のチェック(verified)を必須にする
+app.post('/api/exceptions/:id/cancel-submitted', wrap(async (req, res) => {
+  if (!req.body.verified) {
+    throw new ValidationError('Typeform から取り消しの連絡を手動で送った旨のチェックが必要です');
+  }
+  const rec = store.cancelSubmitted(req.params.id);
+  audit('exception.cancel-submitted', { recordId: rec.id });
   res.json(rec);
 }));
 

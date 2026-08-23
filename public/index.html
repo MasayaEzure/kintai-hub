@@ -56,6 +56,9 @@
         <input id="f1-file" type="file" accept=".xls" class="hidden" />
       </div>
 
+      <!-- Excel パース失敗の詳細(トーストでは読み切れないため、次の取込開始まで残す) -->
+      <div id="f1-problems" class="mt-3 hidden rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700"></div>
+
       <details id="f1-manual" class="mt-2 text-sm">
         <summary class="cursor-pointer select-none font-medium text-slate-600">URL 自動解決に失敗した場合(手動指定)</summary>
         <input id="f1-manual-url" type="text" placeholder="https://platform.levtech.jp/p/workreport/input/1051841/ または id"

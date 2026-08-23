@@ -210,8 +210,9 @@ function renderLevtechPreview(job) {
   const rows = p.rows
     .map((r) => {
       const cls = r.action === 'mismatch' ? 'bg-rose-50 text-rose-700' : r.action === 'fill' ? '' : 'text-slate-400';
-      const exp = r.expected.start ? `${r.expected.start}-${r.expected.end}/${r.expected.rest}` : '空欄';
-      const cur = r.existing ? (r.existing.start ? `${r.existing.start}-${r.existing.end}/${r.existing.rest}` : '空欄') : '—';
+      // 現在値はレバテック画面からスクレイプした文字列(外部由来)のため必ず esc する
+      const exp = r.expected.start ? esc(`${r.expected.start}-${r.expected.end}/${r.expected.rest}`) : '空欄';
+      const cur = r.existing ? (r.existing.start ? esc(`${r.existing.start}-${r.existing.end}/${r.existing.rest}`) : '空欄') : '—';
       const check = r.action === 'mismatch'
         ? `<input type="checkbox" class="approve-overwrite rounded border-rose-300" data-date="${r.date}" />`
         : '';
@@ -249,6 +250,7 @@ function renderLevtechPreview(job) {
         </table>
       </div>
       ${renderApplicationsPreview(p)}
+      ${(p.applications?.planned?.length ?? 0) > 0 ? '<p class="mt-3 text-sm font-medium text-rose-700">チェック済みの申請は承認と同時に Typeform へ送信されます。送信後は取り下げできません(取り消しは Typeform から手動連絡)。</p>' : ''}
       <div class="mt-3 flex justify-end gap-2">
         <button id="job-abort" class="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">中止(何も保存・送信しない)</button>
         <button id="job-approve" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">${approveLabel(p)}</button>
@@ -256,10 +258,13 @@ function renderLevtechPreview(job) {
     </div>`;
 }
 
-function approveLabel(p) {
-  const hasApps = (p.applications?.planned?.length ?? 0) > 0;
-  if (!hasApps) return '承認して入力・保存';
-  return p.levtechNeeded === false ? 'チェック済みの申請を送信' : '承認して入力・保存し、チェック済みの申請を送信';
+// 承認ボタンの文言。sendCount(送信チェック済みの件数)を渡すと件数を確定表示する
+function approveLabel(p, sendCount) {
+  const total = p.applications?.planned?.length ?? 0;
+  if (total === 0) return '承認して入力・保存';
+  const n = sendCount ?? total;
+  const sendPart = n > 0 ? `申請 ${n} 件を送信` : '申請は送信しない(0 件)';
+  return p.levtechNeeded === false ? sendPart : `承認して入力・保存し、${sendPart}`;
 }
 
 // Typeform 申請一覧(送信予定・送信済みスキップ・⚠食い違い・対象外)のプレビュー。
@@ -285,7 +290,7 @@ function renderApplicationsPreview(p) {
         <td class="py-1 text-center"><input type="checkbox" class="app-send rounded border-slate-300" data-index="${app.index}" checked /></td>
       </tr>`).join('');
     html += `
-      <p class="mt-1 text-xs text-slate-500">詳細欄は空欄で送信されます(備考は表示のみ)。連絡済みは「はい」で送信されます。送信後は取り下げできません(取り消しは Typeform から手動連絡)。</p>
+      <p class="mt-1 text-xs text-slate-500">詳細欄は空欄で送信されます(備考は表示のみ)。連絡済みは「はい」で送信されます。</p>
       <div class="mt-2 max-h-56 overflow-y-auto">
         <table class="w-full text-left text-xs">
           <thead class="sticky top-0 bg-white text-slate-400"><tr>
@@ -306,13 +311,13 @@ function renderApplicationsPreview(p) {
   }
   if (a.mismatched.length > 0) {
     html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-      <p class="font-medium">⚠食い違い — 自動送信しません。取り消しの連絡は Typeform から手動で送ってください</p>
+      <p class="font-medium">⚠食い違い — 自動送信しません。取り消しの連絡は Typeform から手動で送り、送信済み台帳の「取消(連絡済み)」で台帳を整理してから再実行してください</p>
       ${a.mismatched.map((m) => `<div>Excel: ${appLine(m.app)} ≠ 送信済み: ${m.entries.map(entryLine).join(' / ')}</div>`).join('')}
     </div>`;
   }
   if (a.orphans.length > 0) {
     html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-      <p class="font-medium">⚠食い違い — 送信済みだが Excel に見当たらない日(Excel 側で消えたか内容が変わっています)</p>
+      <p class="font-medium">⚠食い違い — 送信済みだが Excel に見当たらない日(Excel 側で消えたか内容が変わっています)。取り消す場合は Typeform から手動で連絡し、送信済み台帳の「取消(連絡済み)」で整理してください</p>
       ${a.orphans.map((e) => `<div>${entryLine(e)}</div>`).join('')}
     </div>`;
   }
@@ -354,6 +359,12 @@ function bindPreviewHandlers(job) {
         toast(err.message, true);
       }
     };
+  }
+  // 送信チェックの増減を承認ボタンの件数表示へ即時反映する(押す直前に「何件送るか」を確定表示)
+  if (approve && job.preview?.kind === 'levtech-plan') {
+    const updateLabel = () =>
+      (approve.textContent = approveLabel(job.preview, document.querySelectorAll('.app-send:checked').length));
+    document.querySelectorAll('.app-send').forEach((el) => (el.onchange = updateLabel));
   }
 }
 
@@ -432,6 +443,9 @@ function renderRecord(rec) {
     if (rec.statuses.typeform === 'failed') actions.push(['retry-typeform', '申請を再送信', 'border-rose-300 text-rose-700']);
     // none のまま残ったレコード(クリック前失敗など)は未送信確定なので通常導線で送信できる(P1-2)
     else actions.push(['retry-typeform', '申請を送信', 'border-amber-300 text-amber-800']);
+  } else if (!rec.cancelled && rec.statuses.typeform === 'submitted') {
+    // 送信済みの台帳整理: Typeform への取り消し連絡(手動)を済ませた後に台帳側を取消済みへ揃える
+    actions.push(['cancel-submitted', '取消(連絡済み)', 'border-slate-300']);
   }
 
   const actionsHtml = actions
@@ -481,6 +495,22 @@ async function handleRecordAction(btn) {
         : '<p class="mt-1 text-xs text-slate-500">申請前のレコードのため、取り消しの連絡は不要です。</p>';
       openConfirm('台帳レコードの取消', `<p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind] ?? rec.kind}」を台帳から取り消します(論理削除)。</p>${tfNote}`, async () => {
         await api(`/api/exceptions/${id}/cancel-direct`, { method: 'POST' });
+        await refresh();
+      });
+    } else if (act === 'cancel-submitted') {
+      openConfirm('送信済み申請の台帳取消', `
+        <p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind] ?? rec.kind}」を台帳から取り消します(論理削除)。</p>
+        <p class="mt-1 text-xs text-rose-700">この申請は Typeform へ送信済みです。取り消しの連絡は自動化できないため、先に Typeform から手動で送ってください。台帳から取り消すと、この日付は再び自動送信の対象に戻ります。</p>
+        <label class="mt-2 flex items-center gap-1.5 text-sm">
+          <input type="checkbox" id="cancel-submitted-verified" class="rounded border-slate-300" />
+          Typeform から取り消しの連絡を手動で送りました
+        </label>`, async () => {
+        if (!$('cancel-submitted-verified')?.checked) {
+          toast('取り消しの連絡を手動で送った旨のチェックが必要です', true);
+          return;
+        }
+        await api(`/api/exceptions/${id}/cancel-submitted`, { method: 'POST', body: { verified: true } });
+        toast('台帳から取り消しました');
         await refresh();
       });
     } else if (act === 'retry-typeform') {
@@ -547,6 +577,7 @@ async function startImport(file) {
   if (!file) return;
   if (jobBusy) return toast('別のジョブが実行中です。完了後にやり直してください', true);
   if (!/\.xls$/i.test(file.name)) return toast('.xls ファイル(作業実績表)を指定してください', true);
+  $('f1-problems').classList.add('hidden'); // 前回のパース失敗表示は次の取込開始でリセット
   const manualUrl = $('f1-manual-url').value.trim();
   const q = manualUrl ? `?manualUrl=${encodeURIComponent(manualUrl)}` : '';
   try {
@@ -556,12 +587,27 @@ async function startImport(file) {
       body: file,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error ?? `API エラー (${res.status})`);
+    if (!res.ok) {
+      const err = new Error(data.error ?? `API エラー (${res.status})`);
+      err.code = data.code;
+      throw err;
+    }
     toast(`${data.month} の作業実績表を読み取りました。スキャンを開始します`);
     watchJob(data.job.id);
   } catch (err) {
-    toast(err.message, true);
+    // パース失敗は複数行の診断(直すべき箇所の一覧)になるため、消えるトーストではなく常設表示にする
+    if (err.code === 'excel-parse') showImportProblems(err.message);
+    else toast(err.message, true);
   }
+}
+
+function showImportProblems(message) {
+  const box = $('f1-problems');
+  const [head, ...rest] = String(message).split('\n');
+  const items = rest.map((l) => l.replace(/^\s*-\s*/, '')).filter(Boolean);
+  box.innerHTML = `<strong>${esc(head.replace(/:\s*$/, ''))}</strong>` +
+    (items.length ? `<ul class="mt-1 list-disc pl-5">${items.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '');
+  box.classList.remove('hidden');
 }
 
 $('f1-drop').onclick = () => $('f1-file').click();
@@ -584,10 +630,21 @@ $('f1-drop').ondrop = (e) => {
 $('login-start').onclick = async () => {
   try {
     await api('/api/login/start', { method: 'POST' });
+    let pollFailures = 0;
     const timer = setInterval(async () => {
-      const login = await api('/api/login/status');
-      renderLogin(login);
-      if (login.phase === 'idle') clearInterval(timer);
+      // 一時的な通信断(サーバー再起動等)では止めない。連続失敗のみ明示的に停止する(watchJob と同方針)
+      try {
+        const login = await api('/api/login/status');
+        pollFailures = 0;
+        renderLogin(login);
+        if (login.phase === 'idle') clearInterval(timer);
+      } catch (err) {
+        pollFailures++;
+        if (pollFailures >= 5) {
+          clearInterval(timer);
+          toast(`ログイン状態を取得できません: ${err.message}。ページを再読み込みしてください`, true);
+        }
+      }
     }, 2000);
     renderLogin(await api('/api/login/status'));
   } catch (err) {
