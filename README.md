@@ -43,7 +43,6 @@ public/             … UI(素の HTML/JS + Tailwind Play CDN)
 data/               … ストア・監査ログ・バックアップ(Git 管理外)
 poc/                … PoC スクリプト(検証完了・参照用。npm scripts からルートで実行する前提)
 mockup/             … UI モック(v0 / Next.js。見た目の参照元)
-gas/                … 旧カレンダー連携の GAS Web App(機能は廃止済み。控えとして残置)
 ```
 
 ## 安全設計の要点
