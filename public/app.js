@@ -2,18 +2,14 @@
 const TOKEN = document.querySelector('meta[name="kintai-token"]').content;
 const $ = (id) => document.getElementById(id);
 
-const KIND_LABELS = { vacation: 'お休み', late: '遅参', early: '早帰り', custom: '時間変更' };
+const KIND_LABELS = { vacation: 'お休み', late: '遅参', early: '早帰り' };
+const REASONS = ['私用', 'ご体調不良', 'その他'];
 const TF_BADGES = {
   none: ['未申請', 'bg-amber-100 text-amber-800'],
   submitting: ['送信中', 'bg-blue-100 text-blue-800'],
   submitted: ['申請済み', 'bg-emerald-100 text-emerald-800'],
   failed: ['申請失敗', 'bg-rose-100 text-rose-800'],
   unknown: ['送達不明', 'bg-purple-100 text-purple-800'],
-};
-const CAL_BADGES = {
-  none: ['カレンダー未登録', 'bg-slate-100 text-slate-600'],
-  registered: ['カレンダー登録済み', 'bg-emerald-100 text-emerald-800'],
-  failed: ['カレンダー失敗', 'bg-rose-100 text-rose-800'],
 };
 const ACTION_BADGES = {
   fill: ['入力', 'bg-blue-100 text-blue-800'],
@@ -76,7 +72,6 @@ function setBusy(busy) {
   jobBusy = busy;
   $('f1-drop').classList.toggle('pointer-events-none', busy);
   $('f1-drop').classList.toggle('opacity-50', busy);
-  $('f2-submit').disabled = busy;
   applyBusyToRecordActions();
 }
 function applyBusyToRecordActions() {
@@ -179,7 +174,7 @@ function renderJob(job) {
     failed: badge(['失敗', 'bg-rose-100 text-rose-800']),
     cancelled: badge(['中止', 'bg-slate-100 text-slate-600']),
   }[job.state];
-  const typeLabel = { 'levtech-fill': '月末勤怠入力', 'levtech-import': '月末勤怠入力(Excel取込)', request: '例外日の申請・登録', 'typeform-retry': 'Typeform 再送信', 'session-check': 'セッションチェック' }[job.type] ?? job.type;
+  const typeLabel = { 'levtech-import': '月末一括(勤怠入力+Typeform申請)', 'typeform-retry': 'Typeform 再送信', 'session-check': 'セッションチェック' }[job.type] ?? job.type;
 
   let extra = '';
   if (job.state === 'awaiting_confirmation' && job.preview?.kind === 'levtech-plan') {
@@ -253,11 +248,81 @@ function renderLevtechPreview(job) {
           <tbody>${rows}</tbody>
         </table>
       </div>
+      ${renderApplicationsPreview(p)}
       <div class="mt-3 flex justify-end gap-2">
-        <button id="job-abort" class="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">中止(何も保存しない)</button>
-        <button id="job-approve" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">承認して入力・保存</button>
+        <button id="job-abort" class="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">中止(何も保存・送信しない)</button>
+        <button id="job-approve" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">${approveLabel(p)}</button>
       </div>
     </div>`;
+}
+
+function approveLabel(p) {
+  const hasApps = (p.applications?.planned?.length ?? 0) > 0;
+  if (!hasApps) return '承認して入力・保存';
+  return p.levtechNeeded === false ? 'チェック済みの申請を送信' : '承認して入力・保存し、チェック済みの申請を送信';
+}
+
+// Typeform 申請一覧(送信予定・送信済みスキップ・⚠食い違い・対象外)のプレビュー。
+// 理由は 1 件ずつ修正でき、送信チェックを外した申請は送られない
+function renderApplicationsPreview(p) {
+  const a = p.applications;
+  if (!a) return '';
+  const reasonOptions = (sel) => REASONS.map((r) => `<option${r === sel ? ' selected' : ''}>${esc(r)}</option>`).join('');
+  const appLine = (app) => `${esc(app.dateText)} ${esc(app.type)}${app.time ? ` ${esc(app.time)}` : ''}`;
+  const entryLine = (e) => `${esc(e.date)}${e.endDate ? `〜${esc(e.endDate)}` : ''} ${esc(e.type)}${e.time ? ` ${esc(e.time)}` : ''}`;
+
+  let html = `<div class="mt-4 border-t border-slate-200 pt-3">
+    <p class="text-sm font-medium">Typeform 申請: 送信予定 ${a.planned.length} 件 / 送信済みスキップ ${a.skipped.length} 件${a.mismatched.length + a.orphans.length ? ` / <span class="text-rose-600 font-semibold">⚠食い違い ${a.mismatched.length + a.orphans.length} 件</span>` : ''} / 対象外 ${a.excluded.length} 件</p>`;
+
+  if (a.planned.length > 0) {
+    const rows = a.planned.map((app) => `
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="py-1 pr-2 whitespace-nowrap">${esc(app.dateText)}</td>
+        <td class="py-1 pr-2 whitespace-nowrap">${esc(app.type)}</td>
+        <td class="py-1 pr-2 whitespace-nowrap">${app.time ? esc(app.time) : '—'}</td>
+        <td class="py-1 pr-2"><select class="app-reason rounded border border-slate-300 px-1 py-0.5" data-index="${app.index}">${reasonOptions(app.reason)}</select></td>
+        <td class="py-1 pr-2 text-slate-500">${esc(app.note)}</td>
+        <td class="py-1 text-center"><input type="checkbox" class="app-send rounded border-slate-300" data-index="${app.index}" checked /></td>
+      </tr>`).join('');
+    html += `
+      <p class="mt-1 text-xs text-slate-500">詳細欄は空欄で送信されます(備考は表示のみ)。連絡済みは「はい」で送信されます。送信後は取り下げできません(取り消しは Typeform から手動連絡)。</p>
+      <div class="mt-2 max-h-56 overflow-y-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="sticky top-0 bg-white text-slate-400"><tr>
+            <th class="py-1 pr-2 font-normal">日にち</th><th class="py-1 pr-2 font-normal">種別</th>
+            <th class="py-1 pr-2 font-normal">時刻</th><th class="py-1 pr-2 font-normal">理由(修正可)</th>
+            <th class="py-1 pr-2 font-normal">備考(送信されません)</th><th class="py-1 font-normal">送信</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  if (a.skipped.length > 0) {
+    html += `<div class="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-500">
+      <p class="font-medium">送信済みスキップ(台帳と完全一致)</p>
+      ${a.skipped.map((s) => `<div>${appLine(s.app)}${s.entry.status === 'unknown' ? ' <span class="text-purple-700">⚠送達不明のまま(台帳の導線で到達確認してください)</span>' : ''}</div>`).join('')}
+    </div>`;
+  }
+  if (a.mismatched.length > 0) {
+    html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+      <p class="font-medium">⚠食い違い — 自動送信しません。取り消しの連絡は Typeform から手動で送ってください</p>
+      ${a.mismatched.map((m) => `<div>Excel: ${appLine(m.app)} ≠ 送信済み: ${m.entries.map(entryLine).join(' / ')}</div>`).join('')}
+    </div>`;
+  }
+  if (a.orphans.length > 0) {
+    html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+      <p class="font-medium">⚠食い違い — 送信済みだが Excel に見当たらない日(Excel 側で消えたか内容が変わっています)</p>
+      ${a.orphans.map((e) => `<div>${entryLine(e)}</div>`).join('')}
+    </div>`;
+  }
+  if (a.excluded.length > 0) {
+    html += `<div class="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-500">
+      <p class="font-medium">申請対象外</p>
+      ${a.excluded.map((x) => `<div>${esc(x.date)}: ${esc(x.why)}${x.note ? `(備考: ${esc(x.note)})` : ''}</div>`).join('')}
+    </div>`;
+  }
+  return html + '</div>';
 }
 
 function bindPreviewHandlers(job) {
@@ -266,9 +331,15 @@ function bindPreviewHandlers(job) {
   if (approve) {
     approve.onclick = async () => {
       const approvedDates = [...document.querySelectorAll('.approve-overwrite:checked')].map((el) => el.dataset.date);
+      // 申請ごとの決定(理由の修正・送信除外)。省略された申請は原案どおり送信される
+      const applications = [...document.querySelectorAll('.app-send')].map((el) => ({
+        index: Number(el.dataset.index),
+        exclude: !el.checked,
+        reason: document.querySelector(`.app-reason[data-index="${el.dataset.index}"]`)?.value ?? null,
+      }));
       approve.disabled = true;
       try {
-        await api(`/api/jobs/${job.id}/confirm`, { method: 'POST', body: { approve: true, data: { approvedDates } } });
+        await api(`/api/jobs/${job.id}/confirm`, { method: 'POST', body: { approve: true, data: { approvedDates, applications } } });
       } catch (err) {
         toast(err.message, true);
         approve.disabled = false; // 確認待ち中は再描画しないため、失敗時はここで復帰させる
@@ -288,15 +359,20 @@ function bindPreviewHandlers(job) {
 
 function renderJobResult(job) {
   const r = job.result;
-  if (job.type === 'levtech-fill' || job.type === 'levtech-import') {
-    return r.saved
-      ? `<div class="mt-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">保存成功: ${r.summary.days} 日 / 合計 ${r.summary.hours}(新規入力 ${r.applied} 行)。「更新しました。」を確認済み。</div>`
-      : `<div class="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">${esc(r.message)}</div>`;
+  if (job.type === 'levtech-import') {
+    const levtech = r.saved
+      ? `保存成功: ${r.summary.days} 日 / 合計 ${r.summary.hours}(新規入力 ${r.applied} 行)。「更新しました。」を確認済み。`
+      : esc(r.message);
+    const tf = r.typeform
+      ? r.typeform.planned > 0
+        ? ` Typeform 申請: ${r.typeform.sent}/${r.typeform.planned} 件を送信しました。`
+        : ' 送信すべき Typeform 申請はありませんでした。'
+      : '';
+    return `<div class="mt-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">${levtech}${tf}</div>`;
   }
-  if (job.type === 'request' || job.type === 'typeform-retry') {
+  if (job.type === 'typeform-retry') {
     const tf = r.typeform ? badge(TF_BADGES[r.typeform] ?? [r.typeform, 'bg-slate-100']) : '';
-    const cal = r.calendar ? badge(CAL_BADGES[r.calendar] ?? [r.calendar, 'bg-slate-100']) : '';
-    return `<div class="mt-2 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm">結果: ${cal} ${tf}</div>`;
+    return `<div class="mt-2 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm">結果: ${tf}</div>`;
   }
   if (job.type === 'session-check') {
     return r.session === 'ok'
@@ -327,19 +403,15 @@ function renderLogin(login) {
   }
 }
 
-// ---- 例外日一覧 ----
-// 取消済みでもカレンダーの手動削除が未完了なら残作業として表示する(P1-4)
-const needsCalendarCleanup = (r) =>
-  r.cancelled && r.cancellation && r.statuses.calendar === 'registered' && !r.cancellation.calendarCleanupDone;
-
+// ---- 送信済み台帳 ----
 function renderRecords() {
   const showCancelled = $('list-show-cancelled').checked;
   const records = [...state.exceptions]
-    .filter((r) => showCancelled || !r.cancelled || needsCalendarCleanup(r))
+    .filter((r) => showCancelled || !r.cancelled)
     .sort((a, b) => b.date.localeCompare(a.date));
   const box = $('record-list');
   if (records.length === 0) {
-    box.innerHTML = '<p class="text-sm text-slate-400">例外日はまだありません。</p>';
+    box.innerHTML = '<p class="text-sm text-slate-400">送信済みの申請はまだありません。月末一括の実行時にここへ記録されます。</p>';
     return;
   }
   box.innerHTML = records.map(renderRecord).join('');
@@ -348,34 +420,18 @@ function renderRecords() {
 }
 
 function renderRecord(rec) {
-  const badges = [];
-  if (rec.kind === 'custom') badges.push(badge(['申請不要', 'bg-slate-100 text-slate-600']));
-  else {
-    badges.push(badge(TF_BADGES[rec.statuses.typeform]));
-    badges.push(badge(CAL_BADGES[rec.statuses.calendar]));
-  }
-  if (rec.cancellation) {
-    const c = rec.cancellation.typeform;
-    if (rec.cancelled) badges.push(badge(['取消済み', 'bg-slate-200 text-slate-600']));
-    else if (c !== 'none') badges.push(badge([`取消申請: ${TF_BADGES[c]?.[0] ?? c}`, 'bg-purple-100 text-purple-800']));
-  }
+  const badges = [badge(TF_BADGES[rec.statuses.typeform] ?? [rec.statuses.typeform, 'bg-slate-100'])];
+  if (rec.cancelled) badges.push(badge(['取消済み', 'bg-slate-200 text-slate-600']));
 
-  const time = rec.time ? ` ${rec.time}` : rec.kind === 'custom' ? ` ${rec.start}-${rec.end}/${rec.rest}` : '';
+  const time = rec.time ? ` ${rec.time}` : '';
   const actions = [];
-  // 直接取消は「申請が成立していない(none / failed)」レコードなら可(P1-3。カレンダー登録済みでも可逆なので可)
-  const canDirectCancel = !rec.cancelled && !rec.cancellation && ['none', 'failed'].includes(rec.statuses.typeform);
-  if (canDirectCancel) actions.push(['cancel-direct', '取消', 'border-slate-300']);
-  if (!rec.cancelled) {
-    // 取り消し申請の再送は本申請の再送と別物なので、ボタン文言でも区別する(P2-7)
-    const isCancelTarget = !!rec.cancellation && rec.cancellation.typeform !== 'none';
-    const tfTarget = isCancelTarget ? rec.cancellation.typeform : rec.statuses.typeform;
-    if (tfTarget === 'failed') actions.push(['retry-typeform', isCancelTarget ? '取り消し申請を再送信' : '申請を再送信', 'border-rose-300 text-rose-700']);
-    // none のまま残った要申請レコード(クリック前失敗など)は未送信確定なので通常導線で送信できる(P1-2)
-    else if (tfTarget === 'none' && rec.kind !== 'custom') actions.push(['retry-typeform', '申請を送信', 'border-amber-300 text-amber-800']);
-    if (rec.statuses.calendar === 'failed') actions.push(['retry-calendar', 'カレンダー再実行', 'border-rose-300 text-rose-700']);
-    if (rec.statuses.typeform === 'submitted' && (!rec.cancellation || rec.cancellation.typeform === 'none')) {
-      actions.push(['cancel-request', '取り消し申請', 'border-slate-300']);
-    }
+  // 直接取消は「申請が成立していない(none / failed)」レコードなら可(P1-3)。
+  // 送信済みの取り消しは Typeform を手動で開いて連絡する(台帳整理もそのときに)
+  if (!rec.cancelled && ['none', 'failed'].includes(rec.statuses.typeform)) {
+    actions.push(['cancel-direct', '取消', 'border-slate-300']);
+    if (rec.statuses.typeform === 'failed') actions.push(['retry-typeform', '申請を再送信', 'border-rose-300 text-rose-700']);
+    // none のまま残ったレコード(クリック前失敗など)は未送信確定なので通常導線で送信できる(P1-2)
+    else actions.push(['retry-typeform', '申請を送信', 'border-amber-300 text-amber-800']);
   }
 
   const actionsHtml = actions
@@ -384,13 +440,10 @@ function renderRecord(rec) {
 
   // unknown 解決導線(§3-3: 到達確認チェック付きの別導線)
   let unknownUi = '';
-  const unknownTarget = !rec.cancelled && (
-    rec.cancellation?.typeform === 'unknown' ? '取消申請' : rec.statuses.typeform === 'unknown' ? '申請' : null
-  );
-  if (unknownTarget) {
+  if (!rec.cancelled && rec.statuses.typeform === 'unknown') {
     unknownUi = `
       <div class="mt-2 rounded-lg border border-purple-200 bg-purple-50 p-2.5 text-xs text-purple-800">
-        <p>${unknownTarget}の送達が確認できていません。メール通知等で実際の到達状況を確認してから操作してください。</p>
+        <p>申請の送達が確認できていません。メール通知等で実際の到達状況を確認してから操作してください。</p>
         <label class="mt-1.5 flex items-center gap-1.5">
           <input type="checkbox" class="unknown-verified rounded border-purple-300" data-id="${rec.id}" />
           メール通知等で到達状況を目視確認しました
@@ -402,30 +455,18 @@ function renderRecord(rec) {
       </div>`;
   }
 
-  // 取消済みでカレンダー登録が残っている場合のチェックリスト
-  let cleanupUi = '';
-  if (needsCalendarCleanup(rec)) {
-    cleanupUi = `
-      <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
-        <label class="flex items-center gap-1.5">
-          <input type="checkbox" data-act="cleanup-done" data-id="${rec.id}" class="rounded border-amber-300" />
-          カレンダー「勤怠ハブ」からこの日の予定を手動削除しました(差分同期はスコープ外のため手動です)
-        </label>
-      </div>`;
-  }
-
   return `
     <div class="rounded-lg border border-slate-200 p-3 ${rec.cancelled ? 'opacity-60' : ''}">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="text-sm ${rec.cancelled ? 'line-through' : ''}">
           <span class="font-medium">${fmtDate(rec)}</span>
-          <span class="ml-2">${KIND_LABELS[rec.kind]}${esc(time)}</span>
+          <span class="ml-2">${KIND_LABELS[rec.kind] ?? rec.kind}${esc(time)}</span>
           ${rec.reason ? `<span class="ml-2 text-slate-500">${esc(rec.reason)}${rec.reasonDetail ? `(${esc(rec.reasonDetail)})` : ''}</span>` : ''}
         </div>
         <div class="flex flex-wrap items-center gap-1.5">${badges.join('')}</div>
       </div>
       ${actionsHtml ? `<div class="mt-2 flex flex-wrap gap-1.5">${actionsHtml}</div>` : ''}
-      ${unknownUi}${cleanupUi}
+      ${unknownUi}
     </div>`;
 }
 
@@ -436,38 +477,16 @@ async function handleRecordAction(btn) {
   try {
     if (act === 'cancel-direct') {
       const tfNote = rec.statuses.typeform === 'failed'
-        ? '<p class="mt-1 text-xs text-slate-500">申請は送信されていない(失敗)ため、取り消し申請は不要です。</p>'
-        : '<p class="mt-1 text-xs text-slate-500">申請前のレコードのため、取り消し申請は不要です。</p>';
-      const calNote = rec.statuses.calendar === 'registered'
-        ? '<p class="mt-2 text-xs text-amber-700">カレンダーには登録済みです。取消後に予定の手動削除が必要です(チェックリストが出ます)。</p>'
-        : '';
-      openConfirm('レコードの取消', `<p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind]}」を取り消します。</p>${tfNote}${calNote}`, async () => {
+        ? '<p class="mt-1 text-xs text-slate-500">申請は送信されていない(失敗)ため、取り消しの連絡は不要です。</p>'
+        : '<p class="mt-1 text-xs text-slate-500">申請前のレコードのため、取り消しの連絡は不要です。</p>';
+      openConfirm('台帳レコードの取消', `<p>${fmtDate(rec)} の「${KIND_LABELS[rec.kind] ?? rec.kind}」を台帳から取り消します(論理削除)。</p>${tfNote}`, async () => {
         await api(`/api/exceptions/${id}/cancel-direct`, { method: 'POST' });
         await refresh();
       });
     } else if (act === 'retry-typeform') {
-      // 取り消し申請の再送はダイアログでも本申請と区別する(P2-7)
-      const isCancellation = !!rec.cancellation && rec.cancellation.typeform !== 'none';
-      const label = isCancellation ? '取り消し申請' : '申請';
-      const isResend = (isCancellation ? rec.cancellation.typeform : rec.statuses.typeform) === 'failed';
-      const verb = isResend ? '再送信' : '送信';
-      openConfirm(`${label}の${verb}`, `<p>${fmtDate(rec)} の${label}を Typeform へ${verb}します。送信後は取り下げできません。</p>`, async () => {
+      const verb = rec.statuses.typeform === 'failed' ? '再送信' : '送信';
+      openConfirm(`申請の${verb}`, `<p>${fmtDate(rec)} の申請を Typeform へ${verb}します。送信後は取り下げできません。</p>`, async () => {
         const { job } = await api(`/api/exceptions/${id}/retry-typeform`, { method: 'POST' });
-        watchJob(job.id);
-      });
-    } else if (act === 'retry-calendar') {
-      await api(`/api/exceptions/${id}/retry-calendar`, { method: 'POST' });
-      toast('カレンダー登録を再実行しました');
-      await refresh();
-    } else if (act === 'cancel-request') {
-      const detail = prompt('取り消しの背景(Typeform に送信されます)', `${fmtDate(rec)} の${KIND_LABELS[rec.kind]}のご連絡を取り消します`);
-      if (detail == null) return;
-      openConfirm('取り消し申請の送信', `
-        <p>Typeform で「前回ご連絡の取り消し」を送信します。送信後は取り下げできません。</p>
-        <dl class="mt-2 grid grid-cols-3 gap-1 text-sm"><dt class="text-slate-500">対象</dt><dd class="col-span-2">${fmtDate(rec)} ${KIND_LABELS[rec.kind]}</dd>
-        <dt class="text-slate-500">背景</dt><dd class="col-span-2">${esc(detail)}</dd></dl>
-        <p class="mt-2 text-xs text-amber-700">送信後、カレンダーの予定は手動削除が必要です(完了後にチェックリストが出ます)。</p>`, async () => {
-        const { job } = await api(`/api/exceptions/${id}/cancel-request`, { method: 'POST', body: { detail } });
         watchJob(job.id);
       });
     } else if (act === 'unknown-confirm' || act === 'unknown-resubmit') {
@@ -487,24 +506,14 @@ async function handleRecordAction(btn) {
       if (act === 'unknown-confirm') {
         await resolveUnknown('confirm-submitted');
       } else {
-        const target = rec.cancellation?.typeform === 'unknown' ? '取消申請' : '申請';
         const time = rec.time ? ` ${rec.time}` : '';
-        openConfirm(`送達不明の${target}を再送信`, `
-          <p class="text-xs text-rose-700">初回の送信が実際には届いていた場合、この操作で<strong>同じ${target}が二重に送信</strong>されます。送信後は取り下げできません。</p>
+        openConfirm('送達不明の申請を再送信', `
+          <p class="text-xs text-rose-700">初回の送信が実際には届いていた場合、この操作で<strong>同じ申請が二重に送信</strong>されます。送信後は取り下げできません。</p>
           <dl class="mt-2 grid grid-cols-3 gap-1 text-sm">
-            <dt class="text-slate-500">対象</dt><dd class="col-span-2">${fmtDate(rec)} ${KIND_LABELS[rec.kind]}${esc(time)}</dd>
+            <dt class="text-slate-500">対象</dt><dd class="col-span-2">${fmtDate(rec)} ${KIND_LABELS[rec.kind] ?? rec.kind}${esc(time)}</dd>
             ${rec.reason ? `<dt class="text-slate-500">理由</dt><dd class="col-span-2">${esc(rec.reason)}${rec.reasonDetail ? `(${esc(rec.reasonDetail)})` : ''}</dd>` : ''}
           </dl>`, () => resolveUnknown('resubmit'));
       }
-    } else if (act === 'cleanup-done') {
-      // 誤クリックの即確定を防ぐ(P2-8): チェックを一旦戻し、確認された場合のみ確定する
-      btn.checked = false;
-      openConfirm('カレンダー手動削除の確定', `
-        <p>${fmtDate(rec)} の予定をカレンダー「勤怠ハブ」から<strong>削除済み</strong>として確定します。</p>
-        <p class="mt-2 text-xs text-slate-500">確定するとこの残作業チェックリストは一覧から消えます。まだ削除していない場合は「やめる」を押してください。</p>`, async () => {
-        await api(`/api/exceptions/${id}/cleanup-done`, { method: 'POST', body: { done: true } });
-        await refresh();
-      });
     }
   } catch (err) {
     toast(err.message, true);
@@ -569,54 +578,6 @@ $('f1-drop').ondrop = (e) => {
   e.preventDefault();
   $('f1-drop').classList.remove('border-indigo-400', 'bg-indigo-50/40');
   startImport(e.dataTransfer.files?.[0]);
-};
-
-// ---- フロー② 操作 ----
-function syncF2Visibility() {
-  const kind = $('f2-kind').value;
-  $('f2-range-row').style.display = kind === 'vacation' ? '' : 'none';
-  $('f2-time-row').style.display = kind === 'vacation' ? 'none' : '';
-  $('f2-time-label').textContent = kind === 'late' ? '出社時刻(目途)' : '退社時刻(目途)';
-}
-$('f2-kind').onchange = syncF2Visibility;
-$('f2-range').onchange = () => ($('f2-enddate').disabled = !$('f2-range').checked);
-syncF2Visibility();
-
-$('f2-submit').onclick = () => {
-  const kind = $('f2-kind').value;
-  const body = {
-    kind,
-    date: $('f2-date').value,
-    endDate: kind === 'vacation' && $('f2-range').checked ? $('f2-enddate').value : null,
-    time: kind === 'vacation' ? null : $('f2-time').value,
-    reason: $('f2-reason').value,
-    reasonDetail: $('f2-detail').value.trim() || null,
-    contacted: $('f2-contacted').value === 'true',
-  };
-  if (!body.date) return toast('対象日を入力してください', true);
-  // 連続休暇チェック ON なのに終了日が空欄のまま送ると単日休暇として申請されてしまう(P2-5)
-  if (kind === 'vacation' && $('f2-range').checked && !body.endDate) {
-    return toast('連続休暇の終了日を入力してください', true);
-  }
-  if (kind !== 'vacation' && !body.time) return toast('時刻を入力してください', true);
-
-  const dateText = body.endDate ? `${body.date} 〜 ${body.endDate}` : body.date;
-  openConfirm('申請内容の確認', `
-    <p class="text-amber-700 text-xs">Typeform への申請は送信後に取り下げできません。内容をよく確認してください。</p>
-    <dl class="mt-2 grid grid-cols-3 gap-1">
-      <dt class="text-slate-500">種別</dt><dd class="col-span-2">${KIND_LABELS[kind]}</dd>
-      <dt class="text-slate-500">日にち</dt><dd class="col-span-2">${dateText}</dd>
-      ${body.time ? `<dt class="text-slate-500">${kind === 'late' ? '開始時刻' : '終了時刻'}</dt><dd class="col-span-2">${body.time}</dd>` : ''}
-      <dt class="text-slate-500">理由</dt><dd class="col-span-2">${esc(body.reason)}${body.reasonDetail ? `(${esc(body.reasonDetail)})` : ''}</dd>
-      <dt class="text-slate-500">連絡済み</dt><dd class="col-span-2">${body.contacted ? 'はい' : 'いいえ'}</dd>
-    </dl>
-    <p class="mt-2 text-xs text-slate-500">実行順: ① カレンダー登録(冪等)→ ② Typeform 送信。</p>`, async () => {
-    const { job } = await api('/api/requests', { method: 'POST', body });
-    $('f2-date').value = '';
-    $('f2-detail').value = '';
-    watchJob(job.id);
-    await refresh();
-  });
 };
 
 // ---- ログイン操作 ----

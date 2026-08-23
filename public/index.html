@@ -14,9 +14,9 @@
   <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6">
     <header class="flex flex-col gap-1">
       <p class="text-sm font-medium text-indigo-600">勤怠ハブ</p>
-      <h1 class="text-2xl font-semibold tracking-tight">月末勤怠入力・例外日の申請</h1>
+      <h1 class="text-2xl font-semibold tracking-tight">月末一括: 勤怠入力+Typeform申請</h1>
       <p class="text-sm leading-relaxed text-slate-500">
-        例外日(休暇・遅刻早退)を一箇所で管理し、月末にボタン一つでレバテックへ自動入力。例外日の発生時は申請とカレンダー登録も一度の操作で。
+        作業実績表(Excel)を唯一の情報源として、月末にレバテック入力と Typeform 申請をまとめて実行。送信済み台帳が二重申請を防ぎます。
       </p>
     </header>
 
@@ -44,8 +44,8 @@
           <svg class="size-4.5 h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
         </div>
         <div>
-          <h2 class="font-semibold">月末勤怠入力(レバテック)</h2>
-          <p class="text-sm text-slate-500">作業実績表(Excel)を読み取って一括入力します。年月はファイルから自動判定し、保存前に必ずプレビュー承認を挟みます。</p>
+          <h2 class="font-semibold">月末一括(レバテック入力+Typeform申請)</h2>
+          <p class="text-sm text-slate-500">作業実績表(Excel)を読み取り、勤怠の一括入力と休暇等の Typeform 申請をまとめて実行します。年月はファイルから自動判定し、実行前に必ずプレビュー承認を挟みます。</p>
         </div>
       </div>
 
@@ -65,71 +65,13 @@
       <p id="f1-lastrun" class="mt-4 text-sm text-slate-500"></p>
     </section>
 
-    <!-- フロー②: 例外日の申請・登録 -->
-    <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="flex items-center gap-2.5">
-        <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-        </div>
-        <div>
-          <h2 class="font-semibold">例外日の申請・登録</h2>
-          <p class="text-sm text-slate-500">カレンダー登録と Typeform 申請を一度の操作で。送信前に内容を確認します。</p>
-        </div>
-      </div>
-
-      <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium">種別</span>
-          <select id="f2-kind" class="rounded-lg border border-slate-300 px-2 py-2">
-            <option value="vacation">お休み</option>
-            <option value="late">遅参</option>
-            <option value="early">早帰り</option>
-          </select>
-        </label>
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium">対象日</span>
-          <input id="f2-date" type="date" class="rounded-lg border border-slate-300 px-2 py-1.5" />
-        </label>
-        <label id="f2-range-row" class="flex items-center gap-2 text-sm sm:col-span-2">
-          <input id="f2-range" type="checkbox" class="rounded border-slate-300" />
-          <span>連続休暇(期間で指定)</span>
-          <input id="f2-enddate" type="date" disabled class="rounded-lg border border-slate-300 px-2 py-1.5 disabled:bg-slate-100" />
-        </label>
-        <label id="f2-time-row" class="flex flex-col gap-1 text-sm">
-          <span class="font-medium" id="f2-time-label">時刻</span>
-          <input id="f2-time" type="time" class="rounded-lg border border-slate-300 px-2 py-1.5" />
-        </label>
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium">理由</span>
-          <select id="f2-reason" class="rounded-lg border border-slate-300 px-2 py-2">
-            <option>私用</option>
-            <option>ご体調不良</option>
-            <option>その他</option>
-          </select>
-        </label>
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium">詳細(任意)</span>
-          <input id="f2-detail" type="text" placeholder="例: 夏季休暇取得" class="rounded-lg border border-slate-300 px-2 py-1.5" />
-        </label>
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium">参画先企業へ連絡済み</span>
-          <select id="f2-contacted" class="rounded-lg border border-slate-300 px-2 py-2">
-            <option value="true">はい</option>
-            <option value="false">いいえ</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="mt-4 flex items-center justify-between gap-3">
-        <p class="text-sm text-slate-500">申請は提出後に取り下げできません(取り消しは別途申請)。</p>
-        <button id="f2-submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">内容を確認して申請</button>
-      </div>
-    </section>
-
-    <!-- 例外日一覧 -->
+    <!-- 送信済み台帳 -->
     <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div class="flex items-center justify-between">
-        <h2 class="font-semibold">例外日一覧</h2>
+        <div>
+          <h2 class="font-semibold">送信済み台帳</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Typeform へ送信した(送信しようとした)申請の記録。再実行時は送信済みを自動スキップします。</p>
+        </div>
         <label class="flex items-center gap-1.5 text-xs text-slate-500">
           <input id="list-show-cancelled" type="checkbox" class="rounded border-slate-300" /> 取消済みも表示
         </label>
@@ -138,7 +80,7 @@
     </section>
   </main>
 
-  <!-- フロー② 確認ダイアログ -->
+  <!-- 確認ダイアログ -->
   <dialog id="confirm-dialog" class="w-full max-w-md rounded-xl p-0">
     <div class="p-5">
       <h3 class="font-semibold" id="confirm-title">送信内容の確認</h3>

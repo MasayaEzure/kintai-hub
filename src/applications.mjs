@@ -1,47 +1,21 @@
-// PoC ステップ5: 作業実績表 → Typeform 申請一覧の変換ロジック検証 CLI。
-// ※ 2026-08-21 に src/applications.mjs へ移植済み。本ファイルは検証記録として残置(保守しない)。
-// パース・分類は src/excel.mjs(検証済み)に任せ、ここでは
-// 「分類結果 → 送るはずの申請一覧」の変換と送信済み台帳との照合だけを検証する。
-// 画面もフォーム操作もなし。送信は一切しない。
+// 申請一覧の組み立てと送信済み台帳との照合(MVP_SPEC.md 月末一括化)。
+// PoC 08-build-applications.mjs で検証した純粋ロジックの本実装+store 連携層。
 //
 // 変換ルール(2026-08-19 グリル確定・memory: excel-batch-typeform-design):
 //   - 終日休暇 → お休み。暦日で連続する終日休暇のみ1件にまとめる
 //     (土日祝は分類「休日」になるため、間に挟まると自動的に別件へ分かれる)
 //   - 遅刻・午前休暇 → 遅参(開始時刻付き) / 早退・午後休暇 → 早帰り(終了時刻付き)
 //   - 中抜け・⚠系(要確認/空欄平日)は申請対象外(一覧に理由付きで表示のみ)
-//   - 理由は備考から推定: 「体調」を含めば「ご体調不良」、それ以外は「私用」
-//     参画先企業へ連絡済み=「はい」(いずれも本実装では確認画面で修正可)
-//   - 詳細欄はフォーム上任意のため空欄で送る。備考全文はプレビュー表示のみ(2026-08-20 決定)
+//   - 理由は備考から推定: 「体調」を含めば「ご体調不良」、それ以外は「私用」(確認画面で修正可)
+//   - 詳細欄はフォーム上任意のため空欄で送る。備考全文はプレビュー表示のみ
 //   - 送信済み台帳と照合: 完全一致はスキップ / 同じ日に内容違いは⚠食い違い(送信しない)
-//     台帳側にしかない日も⚠食い違い(取り消しは手動対応)
-//
-// 実行: npm run build-apps                         (既定: ダミー8月ファイル)
-//       npm run build-apps -- <xlsパス>
-//       npm run build-apps -- <xlsパス> --ledger <台帳JSONパス>
-// 台帳 JSON: [{ "type": "お休み|遅参|早帰り", "date": "YYYY-MM-DD",
-//               "endDate": "YYYY-MM-DD"|null, "time": "HH:MM"|null }, ...]
-import fs from 'node:fs';
-import { parseXls, fmtMinutes, ExcelParseError } from '../src/excel.mjs';
+//     台帳側にしかない日も⚠食い違い(取り消しは Typeform から手動連絡)
+import { fmtMinutes } from './excel.mjs';
+import { KIND_LABELS } from './store.mjs';
 
-const args = process.argv.slice(2);
-const ledgerIdx = args.indexOf('--ledger');
-const ledgerPath = ledgerIdx !== -1 ? args[ledgerIdx + 1] : null;
-const filePath = args.find((a, i) => !a.startsWith('--') && (ledgerIdx === -1 || i !== ledgerIdx + 1))
-  ?? 'data/samples/Poc検証用ダミーファイル_8月.XLS';
-
-if (!fs.existsSync(filePath)) {
-  console.error(`ファイルが見つかりません: ${filePath}`);
-  process.exit(1);
-}
-
-let workHours = { start: '09:00', end: '18:00', rest: '01:00' };
-try {
-  workHours = { ...workHours, ...JSON.parse(fs.readFileSync('./config.json', 'utf8')).workHours };
-} catch {
-  console.log('config.json を読めないため既定の基準値(09:00-18:00 休憩01:00)を使います');
-}
-
-// ---- 変換本体(本実装へ移植する予定のロジック) ----
+export const TYPE_TO_KIND = { 'お休み': 'vacation', '遅参': 'late', '早帰り': 'early' };
+// 確認画面の理由セレクトの選択肢(Typeform の選択肢と一致させる)
+export const REASONS = ['私用', 'ご体調不良', 'その他'];
 
 // Typeform 日にち欄の表記。単日は '8/14'(実送信実績のある M/D)、期間はフォーム側の
 // 記入ガイド「20YY/MM/DD〜20YY/MM/DD のようにご回答ください」に従う(ドライラン 2026-08-20 で確認)
@@ -50,10 +24,10 @@ const md = (iso) => {
   return `${m}/${d}`;
 };
 const ymd = (iso) => iso.replaceAll('-', '/');
-const dateText = (app) => (app.endDate ? `${ymd(app.date)}〜${ymd(app.endDate)}` : md(app.date));
+export const dateText = (app) => (app.endDate ? `${ymd(app.date)}〜${ymd(app.endDate)}` : md(app.date));
 const inferReason = (note) => (note.includes('体調') ? 'ご体調不良' : '私用');
 
-// days(excel.mjs の分類済み配列)→ { apps, excluded }
+// days(excel.mjs parseXls の分類済み配列)→ { apps, excluded }
 export function buildApplications(days) {
   const apps = [];
   const excluded = []; // 申請対象外(⚠系・中抜け)。プレビュー表示用
@@ -146,52 +120,63 @@ export function reconcile(apps, ledger) {
   return { toSend, skipped, mismatched, orphans };
 }
 
-// ---- CLI 表示 ----
-const fmtApp = (a) =>
-  `${dateText(a).padEnd(10)} ${a.type.padEnd(4)} ${(a.time ?? '—').padEnd(6)} 理由=${a.reason} 詳細=空欄 連絡済み=${a.contacted} (備考: ${a.note || 'なし'})`;
-const fmtEntry = (e) =>
-  `${e.date}${e.endDate ? `〜${e.endDate}` : ''} ${e.type}${e.time ? ` ${e.time}` : ''}`;
-
-console.log(`入力: ${filePath}`);
-let parsed;
-try {
-  parsed = parseXls(fs.readFileSync(filePath), workHours);
-} catch (err) {
-  if (err instanceof ExcelParseError) {
-    console.error(`FAIL パース失敗:\n${err.message}`);
-    process.exit(1);
+// store の exceptions レコード → 台帳エントリ。
+// sent: 送信済み扱い(submitted / submitting / unknown)。重なる申請は自動送信しない
+// reusable: 未送信(none / failed)。同じ日を送り直すときは論理削除して作り直す対象
+export function toLedger(records) {
+  const sent = [];
+  const reusable = [];
+  for (const rec of records) {
+    if (rec.cancelled) continue;
+    const type = KIND_LABELS[rec.kind];
+    if (!TYPE_TO_KIND[type]) continue; // 旧 custom 等、申請と対応しない過去レコードは台帳外
+    const entry = {
+      type,
+      date: rec.date,
+      endDate: rec.endDate ?? null,
+      time: rec.time ?? null,
+      status: rec.statuses.typeform,
+      recordId: rec.id,
+    };
+    if (['submitted', 'submitting', 'unknown'].includes(rec.statuses.typeform)) sent.push(entry);
+    else reusable.push(entry);
   }
-  throw err;
-}
-console.log(`年月: ${parsed.month} / 実働合計: ${fmtMinutes(parsed.totalMinutes)}(N43 突合済み)`);
-
-const { apps, excluded } = buildApplications(parsed.days);
-
-console.log(`\n■ 申請一覧(${apps.length}件)`);
-for (const a of apps) console.log(`  ${fmtApp(a)}`);
-
-console.log(`\n■ 申請対象外(${excluded.length}件)`);
-for (const x of excluded) {
-  console.log(`  ${md(x.date).padEnd(6)} ${x.why} ${x.note ? `備考=${x.note}` : ''}${x.warnings.length ? ` / ${x.warnings.join(' / ')}` : ''}`);
+  return { sent, reusable };
 }
 
-if (ledgerPath) {
-  const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
-  console.log(`\n台帳: ${ledgerPath}(${ledger.length}件)と照合`);
-  const { toSend, skipped, mismatched, orphans } = reconcile(apps, ledger);
+const overlapsRange = (a, b) => a.date <= (b.endDate ?? b.date) && b.date <= (a.endDate ?? a.date);
 
-  console.log(`\n■ 送信する申請(${toSend.length}件)`);
-  for (const a of toSend) console.log(`  ${fmtApp(a)}`);
+// Excel の days + store レコード → 送信計画(確認画面のプレビュー素材)
+export function buildSubmissionPlan(days, records) {
+  const { apps, excluded } = buildApplications(days);
+  const { sent, reusable } = toLedger(records);
+  const { toSend, skipped, mismatched, orphans } = reconcile(apps, sent);
+  const planned = toSend.map((app, index) => ({
+    index,
+    ...app,
+    dateText: dateText(app),
+    staleRecordIds: reusable.filter((e) => overlapsRange(e, app)).map((e) => e.recordId),
+  }));
+  return { planned, skipped, mismatched, orphans, excluded };
+}
 
-  console.log(`\n■ 送信済みスキップ(${skipped.length}件)`);
-  for (const s of skipped) console.log(`  ${fmtApp(s.app)}  ← 台帳 ${fmtEntry(s.entry)}`);
-
-  console.log(`\n■ ⚠食い違い — 送信しません。取り消しの連絡は Typeform から手動で(${mismatched.length}件)`);
-  for (const m of mismatched) {
-    console.log(`  Excel: ${fmtApp(m.app)}`);
-    for (const e of m.entries) console.log(`    ≠ 送信済み: ${fmtEntry(e)}`);
+// 確認画面の結果([{ index, reason, exclude }])を planned に適用して送信リストを確定する。
+// 承認データが壊れている場合はレバテック入力前に throw して安全側で失敗させる
+export function applyDecision(planned, decisionApps = []) {
+  const byIndex = new Map();
+  for (const d of decisionApps ?? []) {
+    if (!Number.isInteger(d.index) || d.index < 0 || d.index >= planned.length) {
+      throw new Error(`確認結果の index が不正です: ${JSON.stringify(d.index)}`);
+    }
+    if (d.reason != null && !REASONS.includes(d.reason)) {
+      throw new Error(`確認結果の理由が不正です: ${JSON.stringify(d.reason)}`);
+    }
+    byIndex.set(d.index, d);
   }
-
-  console.log(`\n■ ⚠食い違い — 送信済みだが Excel に見当たらない日(${orphans.length}件)`);
-  for (const e of orphans) console.log(`  ${fmtEntry(e)}(Excel 側で消えたか内容が変わっています)`);
+  return planned
+    .filter((app) => !byIndex.get(app.index)?.exclude)
+    .map((app) => {
+      const d = byIndex.get(app.index);
+      return d?.reason ? { ...app, reason: d.reason } : app;
+    });
 }

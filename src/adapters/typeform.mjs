@@ -15,20 +15,17 @@ export class TypeformStuckError extends Error {
   }
 }
 
-// record → 回答セット
-export function buildAnswers(record, { cancellation = false } = {}) {
+// record → 回答セット。
+// 日にち欄の表記: 単日は '8/14'(実送信実績のある M/D)、期間はフォームの記入ガイド
+// 「20YY/MM/DD〜20YY/MM/DD のようにご回答ください」に従う(ドライラン 2026-08-20 で確認)
+export function buildAnswers(record) {
   const md = (iso) => {
     const [, m, d] = iso.split('-').map(Number);
     return `${m}/${d}`;
   };
-  const dateText = record.endDate ? `${md(record.date)}〜${md(record.endDate)}` : md(record.date);
+  const ymd = (iso) => iso.replaceAll('-', '/');
+  const dateText = record.endDate ? `${ymd(record.date)}〜${ymd(record.endDate)}` : md(record.date);
   const kindLabel = { vacation: 'お休み', late: '遅参', early: '早帰り' }[record.kind];
-  if (cancellation) {
-    const detail = record.cancellation?.detail
-      ? record.cancellation.detail
-      : `${dateText} の${kindLabel}のご連絡を取り消します`;
-    return { type: '前回ご連絡の取り消し', date: dateText, start: '', end: '', reason: 'その他', detail, contacted: 'はい' };
-  }
   return {
     type: kindLabel,
     date: dateText,
