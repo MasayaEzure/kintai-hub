@@ -226,6 +226,34 @@ test('parseWorkbook: 丸め結果と Excel 表示(w)の不一致を検出する'
   assert.throws(() => parseWorkbook(wb, WH), /F11: 丸め=09:00 が Excel 表示="9:01" と不一致/);
 });
 
+test('parseWorkbook: 表示形式が h:mm:ss でも値が同じなら不一致にしない(値が違えば検出)', () => {
+  const wb = buildWorkbook({ days: normalJune() });
+  wb.Sheets[SHEET_NAME].F11.w = '9:00:00'; // 秒付き表示だが値は同じ 9:00
+  parseWorkbook(wb, WH); // throw しないこと
+
+  const wb2 = buildWorkbook({ days: normalJune() });
+  wb2.Sheets[SHEET_NAME].F11.w = '9:01:00'; // 秒付き表示で値も違う
+  assert.throws(() => parseWorkbook(wb2, WH), /F11: 丸め=09:00 が Excel 表示="9:01:00" と不一致/);
+});
+
+test('parseWorkbook: 表示文字列(w)が無いセルは丸め不一致と別問題として報告する', () => {
+  const wb = buildWorkbook({ days: normalJune() });
+  delete wb.Sheets[SHEET_NAME].F11.w;
+  assert.throws(() => parseWorkbook(wb, WH), /F11: Excel 表示文字列\(w\)が無いため/);
+});
+
+test('parseWorkbook: 祝日(海の日 2026-07-20)が休日に分類される(祝日キーの日付ずれ回帰)', () => {
+  const days = {};
+  for (let d = 1; d <= 31; d++) {
+    const dow = new Date(2026, 6, d).getDay();
+    if (dow !== 0 && dow !== 6 && d !== 20) days[d] = { start: min(9), end: min(18), rest: min(1) };
+  }
+  const parsed = parseWorkbook(buildWorkbook({ year: 2026, month: 7, days }), WH);
+  const holiday = parsed.days.find((d) => d.date === '2026-07-20');
+  assert.equal(holiday.kind, '休日');
+  assert.equal(holiday.holidayName, '海の日');
+});
+
 test('parseWorkbook: 読み取り対象セルのエラー型(#REF!)を検出する', () => {
   const wb = buildWorkbook({ days: normalJune() });
   wb.Sheets[SHEET_NAME].G12 = { t: 'e', v: 23, w: '#REF!' };

@@ -138,7 +138,8 @@ export function reconcile(apps, ledger) {
         && (e.endDate ?? null) === (app.endDate ?? null)
         && (e.time ?? null) === (app.time ?? null)
     );
-    if (exact) skipped.push({ app, entry: exact });
+    // 完全一致でも他に重なる台帳エントリがあれば食い違いとして報告する(隠れた競合を skip で覆い隠さない)
+    if (exact && overlaps.length === 1) skipped.push({ app, entry: exact });
     else if (overlaps.length > 0) mismatched.push({ app, entries: overlaps });
     else toSend.push(app);
   }

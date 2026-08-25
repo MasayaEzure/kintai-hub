@@ -171,8 +171,15 @@ export function parseWorkbook(wb, workHours) {
     }
     const c = cell(addr);
     if (c?.t === 'n' && min !== null) {
-      const wMin = toMinutes(String(c.w ?? '').trim());
-      if (wMin !== min) problems.push(`${addr}: 丸め=${fmtMinutes(min)} が Excel 表示=${JSON.stringify(c.w)} と不一致`);
+      const w = String(c.w ?? '').trim();
+      if (!w) {
+        // w が無いのは表示との突合ができないだけで、丸め不一致とは別の問題として報告する
+        problems.push(`${addr}: Excel 表示文字列(w)が無いため丸め結果と突合できません`);
+      } else {
+        // 表示形式が h:mm:ss の場合も値が同じなら一致とみなす(秒を落として比較)
+        const wMin = toMinutes(w.replace(/^(\d{1,2}:[0-5]\d):[0-5]\d$/, '$1'));
+        if (wMin !== min) problems.push(`${addr}: 丸め=${fmtMinutes(min)} が Excel 表示=${JSON.stringify(c.w)} と不一致`);
+      }
     }
     return min;
   };

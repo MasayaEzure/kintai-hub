@@ -18,8 +18,10 @@ if (!fs.existsSync(filePath)) {
 let workHours = { start: '09:00', end: '18:00', rest: '01:00' };
 try {
   workHours = { ...workHours, ...JSON.parse(fs.readFileSync('./config.json', 'utf8')).workHours };
-} catch {
-  console.log('config.json を読めないため既定の基準値(09:00-18:00 休憩01:00)を使います');
+} catch (err) {
+  // 既定値で代替してよいのはファイルが無い場合のみ。壊れた config は正常風の結果を出さず失敗させる
+  if (err?.code !== 'ENOENT') throw err;
+  console.log('config.json がないため既定の基準値(09:00-18:00 休憩01:00)を使います');
 }
 
 console.log(`入力: ${filePath}`);

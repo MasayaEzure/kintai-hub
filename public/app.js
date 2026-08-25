@@ -72,6 +72,7 @@ function setBusy(busy) {
   jobBusy = busy;
   $('f1-drop').classList.toggle('pointer-events-none', busy);
   $('f1-drop').classList.toggle('opacity-50', busy);
+  $('f1-file').disabled = busy; // キーボード経由(label + sr-only input)の起動も塞ぐ
   applyBusyToRecordActions();
 }
 function applyBusyToRecordActions() {
@@ -610,7 +611,7 @@ function showImportProblems(message) {
   box.classList.remove('hidden');
 }
 
-$('f1-drop').onclick = () => $('f1-file').click();
+// クリックは label(for="f1-file")がネイティブにファイル選択を開くため JS 不要
 $('f1-file').onchange = () => {
   startImport($('f1-file').files[0]);
   $('f1-file').value = ''; // 同じファイルの再選択でも change が発火するように

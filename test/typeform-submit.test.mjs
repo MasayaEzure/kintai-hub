@@ -26,10 +26,11 @@ const MOCK_FORM_HTML = `<!doctype html>
   </script>
 </body></html>`;
 
-// 送信クリック後に完了画面が出ないフォーム(クリック後の切断・検出タイムアウトの再現用)
+// 送信クリック後に完了画面が出ないフォーム(クリック後の切断・検出タイムアウトの再現用)。
+// クリック成立をフラグで通知し、テスト側が「クリック後」の切断を決定的に再現できるようにする
 const MOCK_FORM_NO_COMPLETE_HTML = MOCK_FORM_HTML.replace(
   "document.body.innerHTML = '<p>ご回答ありがとうございました。</p>';",
-  ''
+  'window.__submitClicked = true;'
 );
 
 function startMockServer(html = MOCK_FORM_HTML) {
@@ -104,16 +105,27 @@ test('クリック成立後・完了検出前にブラウザが切断されて�
     const { ctx, captured } = makeCtx();
     const res = await submitTypeform(configFor(server), ANSWERS, {
       ctx,
-      // クリックは成立させ、完了検出ループの最中にブラウザ接続を落とす。
+      // クリック成立(モックがフラグを立てる)を確認してからブラウザ接続を落とし、
+      // 「完了検出ループ中の切断」を決定的に再現する。クリック前に閉じると
+      // クリック例外の経路(P0-3)に入ってしまい、このテストの対象を検証できない。
       // throw が漏れると呼び出し側で failed(通常再送可)になり、二重申請の経路になる
       onBeforeSubmit: async () => {
-        setTimeout(() => captured.page.context().browser().close().catch(() => {}), 300);
+        let attempts = 0;
+        const poll = setInterval(async () => {
+          const clicked = await captured.page.evaluate(() => window.__submitClicked === true).catch(() => false);
+          if (clicked || ++attempts > 100) {
+            clearInterval(poll);
+            if (clicked) await captured.page.context().browser().close().catch(() => {});
+          }
+        }, 50);
       },
       launchOptions: { headless: true },
-      detectTimeoutMs: 3000,
+      detectTimeoutMs: 5000,
     });
     assert.equal(res.outcome, 'unknown');
     assert.equal(res.detectedBy, null);
+    // クリック例外の経路ではなく、クリック後の完了検出フェーズを通ったことを確認する
+    assert.ok(!res.bodyHead.includes('クリック命令が例外'), `unexpected path: ${res.bodyHead}`);
   } finally {
     server.close();
   }

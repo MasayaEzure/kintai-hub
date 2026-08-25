@@ -129,6 +129,20 @@ test('reconcile: 完全一致はスキップ、重なりのみは⚠食い違い
   assert.deepEqual(orphans.map((e) => e.date), ['2026-08-24']);
 });
 
+test('reconcile: 完全一致でも別の重なりがあれば skip せず⚠食い違いにする(隠れた競合を覆い隠さない)', () => {
+  const { toSend, skipped, mismatched } = reconcile(
+    [app('お休み', '2026-08-12', { endDate: '2026-08-13' })],
+    [
+      entry('お休み', '2026-08-12', { endDate: '2026-08-13' }), // 完全一致
+      entry('遅参', '2026-08-13', { time: '10:00', recordId: 'r2' }), // 同期間に別エントリ(旧データ等)
+    ]
+  );
+  assert.equal(toSend.length, 0);
+  assert.equal(skipped.length, 0);
+  assert.equal(mismatched.length, 1);
+  assert.equal(mismatched[0].entries.length, 2); // 競合が両方とも見える
+});
+
 test('reconcile: 期間の一部でも重なれば送信しない(期間短縮は⚠食い違い)', () => {
   const { toSend, mismatched } = reconcile(
     [app('お休み', '2026-08-12')],

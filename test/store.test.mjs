@@ -102,6 +102,18 @@ test('cancelSubmitted: submitted のみ台帳から取り消せる(手動連絡�
   store.create(vacation('2026-09-01')); // 取消後は同日で作り直せる
 });
 
+test('cancelSubmitted: failed は対象外(cancelDirect を使う)/ 取消後の TF 遷移も拒否される', () => {
+  const store = tmpStore();
+  const rec = store.create(vacation('2026-09-01'));
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'failed');
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError); // failed は cancelDirect の領分
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'submitted');
+  store.cancelSubmitted(rec.id);
+  assert.throws(() => store.transitionTypeform(rec.id, 'submitting'), ValidationError); // 取消済みは遷移不可
+});
+
 test('cancelSubmitted: unknown は対象外(resolve-unknown で確定させてから)', () => {
   const store = tmpStore();
   const rec = store.create(vacation('2026-09-01'));

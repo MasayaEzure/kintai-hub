@@ -26,7 +26,7 @@ npm start   # → http://127.0.0.1:5678/
 
 ## 構成
 
-```
+```text
 src/
   server.mjs        … Express(127.0.0.1 bind・トークン・Origin 検証)
   store.mjs         … 送信済み台帳(JSON・原子的書き込み・世代バックアップ・状態遷移)
