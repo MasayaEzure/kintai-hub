@@ -236,6 +236,19 @@ test('parseWorkbook: 表示形式が h:mm:ss でも値が同じなら不一致�
   assert.throws(() => parseWorkbook(wb2, WH), /F11: 丸め=09:00 が Excel 表示="9:01:00" と不一致/);
 });
 
+test('parseWorkbook: h:mm:ss の秒はシリアル値と同じ規則で丸めて比較する(30秒繰り上げの回帰)', () => {
+  // 9:00:29 → シリアル値・表示とも 9:00 に丸まる → 不一致にしない
+  const wb = buildWorkbook({ days: normalJune() });
+  wb.Sheets[SHEET_NAME].F11 = { t: 'n', v: (9 * 3600 + 29) / 86400, w: '9:00:29' };
+  parseWorkbook(wb, WH); // throw しないこと
+
+  // 9:00:30 → シリアル値・表示とも 9:01 に丸まる → 不一致にしない
+  // (日別・月間の実働合計が合うよう、1日の勤務を 9:01-18:01 として組み立てる)
+  const wb2 = buildWorkbook({ days: normalJune({ 1: { start: min(9, 1), end: min(18, 1), rest: min(1) } }) });
+  wb2.Sheets[SHEET_NAME].F11 = { t: 'n', v: (9 * 3600 + 30) / 86400, w: '9:00:30' };
+  parseWorkbook(wb2, WH); // throw しないこと
+});
+
 test('parseWorkbook: 表示文字列(w)が無いセルは丸め不一致と別問題として報告する', () => {
   const wb = buildWorkbook({ days: normalJune() });
   delete wb.Sheets[SHEET_NAME].F11.w;
