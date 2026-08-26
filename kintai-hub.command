@@ -41,7 +41,17 @@ echo "勤怠ハブを起動しています..."
 node src/server.mjs &
 SERVER_PID=$!
 
-cleanup() { kill "$SERVER_PID" 2>/dev/null; }
+# Playwright はブラウザ起動中、SIGTERM/SIGHUP を吸収して Chrome を閉じるだけで
+# node 自体は終了させない。TERM 後に猶予を置き(Chrome の後始末は約3秒で完了する)、
+# それでも残っていれば SIGKILL で孤児化を確実に防ぐ
+cleanup() {
+  kill "$SERVER_PID" 2>/dev/null || return 0
+  for _ in $(seq 1 10); do
+    kill -0 "$SERVER_PID" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  kill -9 "$SERVER_PID" 2>/dev/null
+}
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
