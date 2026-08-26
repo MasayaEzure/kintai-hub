@@ -16,7 +16,7 @@
 
 ```text
 npm install
-npm start   # → http://127.0.0.1:5678/
+npm start   # → http://127.0.0.1:<port>/ (port の既定値は 5678)
 ```
 
 - 初回起動時に `config.json`(Git 管理外)が自動生成される。`typeform.personalId`(ENG…)を設定すること。

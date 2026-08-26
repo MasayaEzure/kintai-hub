@@ -15,6 +15,12 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 PORT=$(node -p 'try { JSON.parse(require("fs").readFileSync("config.json", "utf8")).port ?? 5678 } catch { 5678 }')
+# サーバー(src/server.mjs)も同じ値で listen するため、不正値を黙って 5678 に
+# 倒すと監視先だけがズレる。検証してエラー終了が正しい
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "エラー: config.json の port が不正です(1〜65535 の整数にしてください): ${PORT}" >&2
+  exit 1
+fi
 URL="http://127.0.0.1:${PORT}/"
 
 # 勤怠ハブ本人かどうかは /api/state の応答内容で判定する
