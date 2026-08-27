@@ -72,21 +72,60 @@ test('取消済みレコードとは重複可', () => {
   store.create(vacation('2026-09-10')); // 取消後は同日で作り直せる
 });
 
-test('submitted 以降のレコードは編集・直接取消ともに拒否される', () => {
+test('submitted 以降のレコードは直接取消が拒否される', () => {
   const store = tmpStore();
   const rec = store.create(vacation('2026-09-01'));
   store.transitionTypeform(rec.id, 'submitting');
   store.transitionTypeform(rec.id, 'submitted');
-  assert.throws(() => store.update(rec.id, { date: '2026-09-02' }), ValidationError);
   assert.throws(() => store.cancelDirect(rec.id), ValidationError);
 });
 
-test('カレンダー登録済みレコードは編集不可', () => {
+test('取消済みレコードのTF遷移は拒否される(取消後の再送を構造的に防ぐ)', () => {
   const store = tmpStore();
   const rec = store.create(vacation('2026-09-01'));
-  store.setCalendar(rec.id, 'registered');
-  assert.equal(store.isEditable(store.get(rec.id)), false);
-  assert.throws(() => store.update(rec.id, { date: '2026-09-02' }), ValidationError);
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'failed');
+  store.cancelDirect(rec.id);
+  assert.throws(() => store.transitionTypeform(rec.id, 'submitting'), ValidationError);
+});
+
+test('cancelSubmitted: submitted のみ台帳から取り消せる(手動連絡後の整理導線)', () => {
+  const store = tmpStore();
+  const rec = store.create(vacation('2026-09-01'));
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError); // none は対象外(cancelDirect を使う)
+  store.transitionTypeform(rec.id, 'submitting');
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError); // 送信中は不可
+  store.transitionTypeform(rec.id, 'submitted');
+  store.cancelSubmitted(rec.id);
+  assert.equal(store.get(rec.id).cancelled, true);
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError); // 二重取消は不可
+  store.create(vacation('2026-09-01')); // 取消後は同日で作り直せる
+});
+
+test('cancelSubmitted: failed は対象外(cancelDirect を使う)/ 取消後の TF 遷移も拒否される', () => {
+  const store = tmpStore();
+  const rec = store.create(vacation('2026-09-01'));
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'failed');
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError); // failed は cancelDirect の領分
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'submitted');
+  store.cancelSubmitted(rec.id);
+  assert.throws(() => store.transitionTypeform(rec.id, 'submitting'), ValidationError); // 取消済みは遷移不可
+});
+
+test('cancelSubmitted: unknown は対象外(resolve-unknown で確定させてから)', () => {
+  const store = tmpStore();
+  const rec = store.create(vacation('2026-09-01'));
+  store.transitionTypeform(rec.id, 'submitting');
+  store.transitionTypeform(rec.id, 'unknown');
+  assert.throws(() => store.cancelSubmitted(rec.id), ValidationError);
+});
+
+test('理由なしのレコードは作成できない(全種別が要申請)', () => {
+  const store = tmpStore();
+  assert.throws(() => store.create({ kind: 'vacation', date: '2026-09-01' }), ValidationError);
+  assert.throws(() => store.create({ kind: 'late', date: '2026-09-02', time: '10:00' }), ValidationError);
 });
 
 // ---- 永続化 ------------------------------------------------------------------

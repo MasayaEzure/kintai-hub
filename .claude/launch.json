@@ -5,8 +5,7 @@
       "name": "kintai-hub",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
-      "port": 5678,
-      "url": "http://127.0.0.1:5678"
+      "port": 5678
     }
   ]
 }

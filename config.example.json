@@ -8,10 +8,6 @@
     "formUrl": "https://crmleverages.typeform.com/to/u67kvMSy",
     "personalId": "ENGxxxxxxxxxx"
   },
-  "calendar": {
-    "webAppUrl": "https://script.google.com/macros/s/XXXXXXXX/exec",
-    "sharedSecret": "GAS のスクリプトプロパティ SHARED_SECRET と同じ値"
-  },
   "workHours": {
     "start": "09:00",
     "end": "18:00",

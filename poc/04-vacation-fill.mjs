@@ -12,9 +12,11 @@
 //   (送信まで行う場合のみ --submit を追加)
 import fs from 'node:fs';
 import { chromium } from 'playwright';
+import { loadConfig } from '../src/config.mjs';
 
-const MY_ID = 'ENG0000907506';
-const FORM_URL = `https://crmleverages.typeform.com/to/u67kvMSy#id=${MY_ID}`;
+// フォーム URL と本人特定 ID は config.json(Git 管理外)から読む(ハードコード排除)
+const config = loadConfig();
+const FORM_URL = `${config.typeform.formUrl}#id=${config.typeform.personalId}`;
 
 // ---- CLI 引数 ----
 const arg = (name, fallback = '') => {

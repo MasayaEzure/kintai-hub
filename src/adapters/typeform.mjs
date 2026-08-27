@@ -15,20 +15,17 @@ export class TypeformStuckError extends Error {
   }
 }
 
-// record → 回答セット
-export function buildAnswers(record, { cancellation = false } = {}) {
+// record → 回答セット。
+// 日にち欄の表記: 単日は '8/14'(実送信実績のある M/D)、期間はフォームの記入ガイド
+// 「20YY/MM/DD〜20YY/MM/DD のようにご回答ください」に従う(ドライラン 2026-08-20 で確認)
+export function buildAnswers(record) {
   const md = (iso) => {
     const [, m, d] = iso.split('-').map(Number);
     return `${m}/${d}`;
   };
-  const dateText = record.endDate ? `${md(record.date)}〜${md(record.endDate)}` : md(record.date);
+  const ymd = (iso) => iso.replaceAll('-', '/');
+  const dateText = record.endDate ? `${ymd(record.date)}〜${ymd(record.endDate)}` : md(record.date);
   const kindLabel = { vacation: 'お休み', late: '遅参', early: '早帰り' }[record.kind];
-  if (cancellation) {
-    const detail = record.cancellation?.detail
-      ? record.cancellation.detail
-      : `${dateText} の${kindLabel}のご連絡を取り消します`;
-    return { type: '前回ご連絡の取り消し', date: dateText, start: '', end: '', reason: 'その他', detail, contacted: 'はい' };
-  }
   return {
     type: kindLabel,
     date: dateText,
@@ -43,7 +40,7 @@ export function buildAnswers(record, { cancellation = false } = {}) {
 // 全問回答 → onBeforeSubmit() → 送信 → 完了検出。
 // 戻り値: { outcome: 'submitted' | 'unknown', detectedBy, bodyHead }
 // 送信クリック前の失敗は throw(呼び出し側で failed 扱い)。クリック後は throw しない。
-export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, screenshotPrefix = 'typeform', launchOptions = {} }) {
+export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, screenshotPrefix = 'typeform', launchOptions = {}, detectTimeoutMs = 20000 }) {
   const rules = [
     { re: /種別/, kind: 'choice', value: answers.type },
     { re: /理由/, kind: 'choice', value: answers.reason },
@@ -98,7 +95,7 @@ export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, scr
         // ---- write-ahead: ここで submitting を永続化してから送信する ----
         await onBeforeSubmit();
         // ---- ここから先は throw しない(結果は submitted / unknown のみ)----
-        // クリック命令自体の例外は「クリック前」と「クリック後」の境界そのもので、
+        // クリック命令以降のあらゆる例外(ページ/ブラウザが閉じた場合の待機・評価の失敗を含む)は、
         // ブラウザ内でクリック(=送信)が成立した後に接続が切れた可能性を否定できない。
         // failed(未送信確定・通常再送可)にすると二重申請の経路になるため unknown を返す(§3-3)
         try {
@@ -107,23 +104,29 @@ export async function submitTypeform(config, answers, { ctx, onBeforeSubmit, scr
           ctx.log(`送信クリック命令が例外で終了しました(送信済みの可能性あり): ${err.message}`);
           return { outcome: 'unknown', detectedBy: null, bodyHead: `クリック命令が例外で終了(送信済みの可能性あり): ${err.message}`.slice(0, 200) };
         }
-        let detectedBy = '';
-        const deadline = Date.now() + 20000;
-        while (!detectedBy && Date.now() < deadline) {
-          const body = await page.evaluate(() => document.body.innerText).catch(() => '');
-          if (body.includes('ありがとう')) detectedBy = 'body テキスト「ありがとう」';
-          if (!detectedBy) await page.waitForTimeout(500);
+        try {
+          let detectedBy = '';
+          const deadline = Date.now() + detectTimeoutMs;
+          while (!detectedBy && Date.now() < deadline) {
+            const body = await page.evaluate(() => document.body.innerText).catch(() => '');
+            if (body.includes('ありがとう')) detectedBy = 'body テキスト「ありがとう」';
+            // ページに紐づかない素の sleep を使う(page.waitForTimeout はページが閉じると reject する)
+            if (!detectedBy) await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          await ctx.screenshot(page, `${screenshotPrefix}-after-submit`).catch(() => {});
+          const bodyHead = (await page.evaluate(() => document.body.innerText).catch(() => ''))
+            .replace(/\s+/g, ' ')
+            .slice(0, 200);
+          if (detectedBy) {
+            ctx.log(`完了画面を検出: ${detectedBy}`);
+            return { outcome: 'submitted', detectedBy, bodyHead };
+          }
+          ctx.log('完了画面を検出できませんでした(送信自体は成立している可能性あり)');
+          return { outcome: 'unknown', detectedBy: null, bodyHead };
+        } catch (err) {
+          ctx.log(`完了検出中に例外が発生しました(送信済みの可能性あり): ${err.message}`);
+          return { outcome: 'unknown', detectedBy: null, bodyHead: `完了検出中に例外(送信済みの可能性あり): ${err.message}`.slice(0, 200) };
         }
-        await ctx.screenshot(page, `${screenshotPrefix}-after-submit`).catch(() => {});
-        const bodyHead = (await page.evaluate(() => document.body.innerText).catch(() => ''))
-          .replace(/\s+/g, ' ')
-          .slice(0, 200);
-        if (detectedBy) {
-          ctx.log(`完了画面を検出: ${detectedBy}`);
-          return { outcome: 'submitted', detectedBy, bodyHead };
-        }
-        ctx.log('完了画面を検出できませんでした(送信自体は成立している可能性あり)');
-        return { outcome: 'unknown', detectedBy: null, bodyHead };
       }
 
       if (title === lastTitle) {
