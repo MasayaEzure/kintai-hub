@@ -2,8 +2,8 @@
 
 作業実績表(Excel)を唯一の情報源として、毎月末のレバテック勤怠入力と Typeform の休暇等申請を、Excel ドロップ→確認→承認の一操作でまとめて実行するツール。
 
-- 仕様: [MVP_SPEC.md](MVP_SPEC.md)(v2)
-- PoC の経緯・技術検証の記録: [POC_STORY.md](POC_STORY.md)
+- 仕様: [MVP_SPEC.md](docs/specs/MVP_SPEC.md)(v2)
+- PoC の経緯・技術検証の記録: [POC_STORY.md](docs/history/POC_STORY.md)
 
 ## 起動(MVP)
 
@@ -34,6 +34,12 @@ npm start   # → http://127.0.0.1:<port>/ (port の既定値は 5678)
 ## 構成
 
 ```text
+docs/
+  specs/
+    MVP_SPEC.md      … MVP の仕様と設計
+  history/
+    POC_STORY.md     … PoC の経緯・技術検証の記録
+  design/            … ローカルの設計レビュー資料(Git 管理外)
 src/
   server.mjs        … Express(127.0.0.1 bind・トークン・Origin 検証)
   store.mjs         … 送信済み台帳(JSON・原子的書き込み・世代バックアップ・状態遷移)

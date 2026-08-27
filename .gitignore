@@ -8,3 +8,11 @@ output/
 deploy-history.log
 .DS_Store
 
+# Personal notes and local reports
+.local/
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Local design review documents
+docs/design/
