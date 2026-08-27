@@ -81,7 +81,6 @@ function applyBusyToRecordActions() {
 
 // ---- ステップ表示 --------------------------------------------------------
 // 現在地は色だけに依存せず、塗りつぶし・太字・aria-current でも表現する(UI_UX_REVIEW §3)
-const confirmedLevtechJobs = new Set(); // プレビュー承認済みジョブ。承認前の running(読み取り中)と実行中を区別する
 function setStep(n) {
   document.querySelectorAll('#steps [data-step]').forEach((li) => {
     const current = Number(li.dataset.step) === n;
@@ -97,7 +96,9 @@ function updateStepFromJob(job) {
   // ステップは月末一括ジョブの流れだけを表す。その他のジョブ種別では動かさない
   if (job && job.type !== 'levtech-import') return;
   if (job?.state === 'awaiting_confirmation') setStep(2);
-  else if (job?.state === 'running') setStep(confirmedLevtechJobs.has(job.id) ? 3 : 1);
+  // job.preview は確認待ち時にサーバーが設定し、承認後の running でも保持される(jobs.mjs)。
+  // ページメモリではなくサーバー由来の値で判定するため、承認後にリロードしてもステップ3を維持できる
+  else if (job?.state === 'running') setStep(job.preview ? 3 : 1);
   else setStep(1);
 }
 
@@ -371,7 +372,6 @@ function bindPreviewHandlers(job) {
       approve.disabled = true;
       try {
         await api(`/api/jobs/${job.id}/confirm`, { method: 'POST', body: { approve: true, data: { approvedDates, applications } } });
-        confirmedLevtechJobs.add(job.id); // 以降の running はステップ3(実行)として表示する
       } catch (err) {
         toast(err.message, true);
         approve.disabled = false; // 確認待ち中は再描画しないため、失敗時はここで復帰させる
