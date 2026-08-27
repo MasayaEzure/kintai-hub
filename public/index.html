@@ -11,19 +11,34 @@
   </style>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-900">
-  <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6">
+  <main class="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
     <header class="flex flex-col gap-1">
-      <p class="text-sm font-medium text-indigo-600">勤怠ハブ</p>
-      <h1 class="text-2xl font-semibold tracking-tight">月末一括: 勤怠入力+Typeform申請</h1>
-      <p class="text-sm leading-relaxed text-slate-500">
-        作業実績表(Excel)を唯一の情報源として、月末にレバテック入力と Typeform 申請をまとめて実行。送信済み台帳が二重申請を防ぎます。
-      </p>
+      <h1 class="text-2xl font-semibold tracking-tight">勤怠ハブ</h1>
+      <p class="text-sm leading-relaxed text-slate-500">月末の作業報告と休暇申請をまとめて登録</p>
     </header>
+
+    <!-- ステップ表示: 現在地は色だけでなく塗りつぶし・太字・aria-current でも示す(app.js の setStep が更新) -->
+    <ol id="steps" class="flex flex-wrap items-center gap-2 text-sm" aria-label="処理の進行状況">
+      <li data-step="1" class="flex items-center gap-1.5" aria-current="step">
+        <span class="step-marker flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">1</span>
+        <span class="step-label font-semibold text-slate-900">ファイル選択</span>
+      </li>
+      <li data-step="2" class="flex items-center gap-1.5">
+        <span aria-hidden="true" class="h-px w-6 bg-slate-300"></span>
+        <span class="step-marker flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs text-slate-500">2</span>
+        <span class="step-label text-slate-500">内容確認</span>
+      </li>
+      <li data-step="3" class="flex items-center gap-1.5">
+        <span aria-hidden="true" class="h-px w-6 bg-slate-300"></span>
+        <span class="step-marker flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs text-slate-500">3</span>
+        <span class="step-label text-slate-500">実行</span>
+      </li>
+    </ol>
 
     <div id="config-problems" class="hidden rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"></div>
 
     <!-- ログイン導線(セッション切れ時に表示) -->
-    <section id="login-card" class="hidden rounded-xl border border-rose-200 bg-rose-50 p-5">
+    <section id="login-card" class="hidden rounded-xl border border-rose-200 bg-rose-50 p-6">
       <h2 class="font-semibold text-rose-800">レバテックのセッションが切れています</h2>
       <p class="mt-1 text-sm text-rose-700">
         下のボタンでログイン用の Chrome を起動し、Google でログイン後、Chrome を<strong>完全終了(Cmd+Q)</strong>してください。終了を検知すると自動でセッションを再チェックします。
@@ -35,49 +50,46 @@
     </section>
 
     <!-- ジョブパネル -->
-    <section id="job-panel" class="hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm"></section>
+    <section id="job-panel" class="hidden rounded-xl border border-slate-200 bg-white p-6 shadow-sm"></section>
 
-    <!-- フロー①: 月末勤怠入力 -->
-    <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="flex items-center gap-2.5">
-        <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
-          <svg class="size-4.5 h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
-        </div>
-        <div>
-          <h2 class="font-semibold">月末一括(レバテック入力+Typeform申請)</h2>
-          <p class="text-sm text-slate-500">作業実績表(Excel)を読み取り、勤怠の一括入力と休暇等の Typeform 申請をまとめて実行します。年月はファイルから自動判定し、実行前に必ずプレビュー承認を挟みます。</p>
-        </div>
-      </div>
+    <!-- ファイル選択カード -->
+    <section class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 class="font-semibold">作業実績表をアップロード</h2>
 
-      <!-- label + sr-only input: クリック/キーボード(Tab → Enter)どちらでもファイル選択を開ける -->
-      <label id="f1-drop" for="f1-file" class="mt-4 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center hover:border-indigo-400 hover:bg-indigo-50/40 focus-within:ring-2 focus-within:ring-indigo-400">
-        <svg class="h-8 w-8 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
-        <p class="text-sm font-medium text-slate-600">作業実績表(.xls)をここにドラッグ&ドロップ</p>
-        <p class="text-xs text-slate-400">クリックしてファイル選択もできます。読み取り後にスキャンが始まり、承認するまで何も書き込みません。</p>
+      <!-- label + sr-only input: クリック/キーボード(Tab → Enter/Space)どちらでもファイル選択を開ける -->
+      <label id="f1-drop" for="f1-file" class="mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center hover:border-indigo-400 hover:bg-indigo-50/40 focus-within:ring-2 focus-within:ring-indigo-400">
+        <span class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+          Excelファイルを選択
+        </span>
+        <span class="text-sm text-slate-600">または、ここにドラッグ＆ドロップ</span>
+        <span class="text-xs text-slate-500">対応形式: .xls</span>
         <input id="f1-file" type="file" accept=".xls" class="sr-only" />
       </label>
 
       <!-- Excel パース失敗の詳細(トーストでは読み切れないため、次の取込開始まで残す) -->
       <div id="f1-problems" class="mt-3 hidden rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700"></div>
 
-      <details id="f1-manual" class="mt-2 text-sm">
-        <summary class="cursor-pointer select-none font-medium text-slate-600">URL 自動解決に失敗した場合(手動指定)</summary>
-        <input id="f1-manual-url" type="text" placeholder="https://platform.levtech.jp/p/workreport/input/1051841/ または id"
-          class="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5" />
+      <p class="mt-3 text-sm text-slate-600">ファイルを読み取った後、送信内容を確認できます。</p>
+
+      <details id="f1-manual" class="mt-3 text-sm">
+        <summary class="cursor-pointer select-none rounded font-medium text-slate-600 hover:text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">入力先URLを指定（自動取得できない場合）</summary>
+        <div class="mt-2">
+          <label for="f1-manual-url" class="block font-medium text-slate-600">入力先URLまたはID</label>
+          <input id="f1-manual-url" type="text" placeholder="例: https://platform.levtech.jp/p/workreport/input/1051841/"
+            class="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5" />
+        </div>
       </details>
 
       <p id="f1-lastrun" class="mt-4 text-sm text-slate-500"></p>
     </section>
 
-    <!-- 送信済み台帳 -->
-    <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="font-semibold">送信済み台帳</h2>
-          <p class="mt-0.5 text-xs text-slate-500">Typeform へ送信した(送信しようとした)申請の記録。再実行時は送信済みを自動スキップします。</p>
-        </div>
-        <label class="flex items-center gap-1.5 text-xs text-slate-500">
-          <input id="list-show-cancelled" type="checkbox" class="rounded border-slate-300" /> 取消済みも表示
+    <!-- 申請履歴(休暇申請のみを記録) -->
+    <section class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div class="flex items-center justify-between gap-4">
+        <h2 class="font-semibold">申請履歴</h2>
+        <label class="flex cursor-pointer items-center gap-1.5 text-sm text-slate-600">
+          <input id="list-show-cancelled" type="checkbox" class="rounded border-slate-300" /> 取消済みを含む
         </label>
       </div>
       <div id="record-list" class="mt-3 flex flex-col gap-2"></div>

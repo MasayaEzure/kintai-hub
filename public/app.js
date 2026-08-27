@@ -79,6 +79,28 @@ function applyBusyToRecordActions() {
   document.querySelectorAll('#record-list [data-act]').forEach((el) => (el.disabled = jobBusy));
 }
 
+// ---- ステップ表示 --------------------------------------------------------
+// 現在地は色だけに依存せず、塗りつぶし・太字・aria-current でも表現する(UI_UX_REVIEW §3)
+const confirmedLevtechJobs = new Set(); // プレビュー承認済みジョブ。承認前の running(読み取り中)と実行中を区別する
+function setStep(n) {
+  document.querySelectorAll('#steps [data-step]').forEach((li) => {
+    const current = Number(li.dataset.step) === n;
+    if (current) li.setAttribute('aria-current', 'step');
+    else li.removeAttribute('aria-current');
+    li.querySelector('.step-marker').className = `step-marker flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs ${
+      current ? 'bg-indigo-600 font-semibold text-white' : 'border border-slate-300 bg-white text-slate-500'
+    }`;
+    li.querySelector('.step-label').className = `step-label ${current ? 'font-semibold text-slate-900' : 'text-slate-500'}`;
+  });
+}
+function updateStepFromJob(job) {
+  // ステップは月末一括ジョブの流れだけを表す。その他のジョブ種別では動かさない
+  if (job && job.type !== 'levtech-import') return;
+  if (job?.state === 'awaiting_confirmation') setStep(2);
+  else if (job?.state === 'running') setStep(confirmedLevtechJobs.has(job.id) ? 3 : 1);
+  else setStep(1);
+}
+
 // ---- 状態の取得と全体描画 --------------------------------------------------
 async function refresh() {
   state = await api('/api/state');
@@ -155,6 +177,7 @@ function watchJob(jobId, { once = false } = {}) {
 function renderJob(job) {
   const panel = $('job-panel');
   setBusy(!!job && ['running', 'awaiting_confirmation'].includes(job.state));
+  updateStepFromJob(job);
   if (!job) {
     panel.classList.add('hidden');
     lastJobRender = null;
@@ -185,9 +208,11 @@ function renderJob(job) {
   } else if (job.state === 'failed') {
     const hint =
       job.errorCode === 'session-expired' ? 'ログイン導線からセッションを回復してください。'
-      : job.errorCode === 'url-unresolved' ? '「URL 自動解決に失敗した場合」から手動で URL を指定して再実行できます。'
+      : job.errorCode === 'url-unresolved' ? '「入力先URLを指定（自動取得できない場合）」から手動で URL を指定して再実行できます。'
       : job.errorCode === 'profile-locked' ? 'ログイン用の Chrome が開いたままです。完全終了(Cmd+Q)してから再実行してください。'
       : '';
+    // URL 未解決の失敗時は手動指定を自動展開し、対処先を見える状態にする(UI_UX_REVIEW §3)
+    if (job.errorCode === 'url-unresolved') $('f1-manual').open = true;
     extra = `<div class="mt-2 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">${esc(job.error)}${hint ? `<div class="mt-1 text-rose-600">${esc(hint)}</div>` : ''}</div>`;
     if (job.screenshots.length) {
       extra += `<p class="mt-1 text-xs text-slate-500">スクリーンショット: ${job.screenshots.map(esc).join(' , ')}</p>`;
@@ -307,18 +332,18 @@ function renderApplicationsPreview(p) {
   if (a.skipped.length > 0) {
     html += `<div class="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-500">
       <p class="font-medium">送信済みスキップ(台帳と完全一致)</p>
-      ${a.skipped.map((s) => `<div>${appLine(s.app)}${s.entry.status === 'unknown' ? ' <span class="text-purple-700">⚠送達不明のまま(台帳の導線で到達確認してください)</span>' : ''}</div>`).join('')}
+      ${a.skipped.map((s) => `<div>${appLine(s.app)}${s.entry.status === 'unknown' ? ' <span class="text-purple-700">⚠送達不明のまま(申請履歴の導線で到達確認してください)</span>' : ''}</div>`).join('')}
     </div>`;
   }
   if (a.mismatched.length > 0) {
     html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-      <p class="font-medium">⚠食い違い — 自動送信しません。取り消しの連絡は Typeform から手動で送り、送信済み台帳の「取消(連絡済み)」で台帳を整理してから再実行してください</p>
+      <p class="font-medium">⚠食い違い — 自動送信しません。取り消しの連絡は Typeform から手動で送り、申請履歴の「取消(連絡済み)」で台帳を整理してから再実行してください</p>
       ${a.mismatched.map((m) => `<div>Excel: ${appLine(m.app)} ≠ 送信済み: ${m.entries.map(entryLine).join(' / ')}</div>`).join('')}
     </div>`;
   }
   if (a.orphans.length > 0) {
     html += `<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-      <p class="font-medium">⚠食い違い — 送信済みだが Excel に見当たらない日(Excel 側で消えたか内容が変わっています)。取り消す場合は Typeform から手動で連絡し、送信済み台帳の「取消(連絡済み)」で整理してください</p>
+      <p class="font-medium">⚠食い違い — 送信済みだが Excel に見当たらない日(Excel 側で消えたか内容が変わっています)。取り消す場合は Typeform から手動で連絡し、申請履歴の「取消(連絡済み)」で整理してください</p>
       ${a.orphans.map((e) => `<div>${entryLine(e)}</div>`).join('')}
     </div>`;
   }
@@ -346,6 +371,7 @@ function bindPreviewHandlers(job) {
       approve.disabled = true;
       try {
         await api(`/api/jobs/${job.id}/confirm`, { method: 'POST', body: { approve: true, data: { approvedDates, applications } } });
+        confirmedLevtechJobs.add(job.id); // 以降の running はステップ3(実行)として表示する
       } catch (err) {
         toast(err.message, true);
         approve.disabled = false; // 確認待ち中は再描画しないため、失敗時はここで復帰させる
@@ -415,7 +441,7 @@ function renderLogin(login) {
   }
 }
 
-// ---- 送信済み台帳 ----
+// ---- 申請履歴(送信済み台帳) ----
 function renderRecords() {
   const showCancelled = $('list-show-cancelled').checked;
   const records = [...state.exceptions]
@@ -423,7 +449,7 @@ function renderRecords() {
     .sort((a, b) => b.date.localeCompare(a.date));
   const box = $('record-list');
   if (records.length === 0) {
-    box.innerHTML = '<p class="text-sm text-slate-400">送信済みの申請はまだありません。月末一括の実行時にここへ記録されます。</p>';
+    box.innerHTML = '<p class="text-sm text-slate-500">申請履歴はまだありません。<br />休暇申請を実行すると、ここに結果が表示されます。</p>';
     return;
   }
   box.innerHTML = records.map(renderRecord).join('');
@@ -610,6 +636,13 @@ function showImportProblems(message) {
     (items.length ? `<ul class="mt-1 list-disc pl-5">${items.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '');
   box.classList.remove('hidden');
 }
+
+// URL 手動指定の折りたたみ状態を支援技術へも伝える(UI_UX_REVIEW §7)
+const manualDetails = $('f1-manual');
+const manualSummary = manualDetails.querySelector('summary');
+const syncManualExpanded = () => manualSummary.setAttribute('aria-expanded', String(manualDetails.open));
+manualDetails.addEventListener('toggle', syncManualExpanded);
+syncManualExpanded();
 
 // クリックは label(for="f1-file")がネイティブにファイル選択を開くため JS 不要
 $('f1-file').onchange = () => {
