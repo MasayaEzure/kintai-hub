@@ -57,7 +57,13 @@ export async function resolveReportId(page, config, month) {
     return [...document.querySelectorAll('a')]
       .map((a) => ({
         href: a.getAttribute('href') || '',
-        rowText: trim(a.closest('tr, li, [class*="item"], [class*="card"], [class*="row"]')?.textContent),
+        // セル自体が <a class="table-row-...__cellLink"> のことがあり、クラス名の "row" が
+        // closest に自己一致してセル単体のテキストしか取れない(2026-08-29 に実画面で確認)。
+        // 実要素の <tr>/<li> を最優先し、クラス推測は親要素からに限定して行全体のテキストを取る
+        rowText: trim(
+          (a.closest('tr, li') ?? a.parentElement?.closest('[class*="item"], [class*="card"], [class*="row"]') ?? a)
+            .textContent
+        ),
       }))
       .filter((r) => /\/p\/workreport\/\d+\//.test(r.href));
   });
